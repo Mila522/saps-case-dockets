@@ -21,6 +21,13 @@ docket creation, and commander approval APIs are documented in
 [Decisions and dockets](docs/decisions-dockets.md). They use the existing schema and
 do not add or modify a migration.
 
+Collaborator C adds investigator assignments/reassignment, assigned-docket access,
+immutable notes, investigation status changes, evidence registration and custody,
+and protected file upload/download. See
+[Investigation and evidence APIs](docs/investigation-evidence.md) for routes,
+permissions, private storage configuration, and testing. This package reuses the
+existing schema and A/B workflows; no migration is required.
+
 ## Complaint and docket database
 
 Revision `53b49290f8f4` extends the identity foundation with nine `case_mgmt`

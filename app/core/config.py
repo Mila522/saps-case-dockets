@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     max_failed_login_attempts: int = Field(default=5, gt=0)
     account_lock_minutes: int = Field(default=15, gt=0)
     mfa_challenge_expire_minutes: int = Field(default=5, gt=0, le=10)
+    evidence_storage_path: Path = Path(__file__).resolve().parents[2] / '.evidence-storage'
+    evidence_max_file_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
 
     @field_validator('jwt_secret_key')
     @classmethod

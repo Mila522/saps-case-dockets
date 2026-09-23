@@ -36,3 +36,7 @@ def allocate_complaint_reference(db: Session, station: Station, now: datetime) -
 
 def allocate_cas_number(db: Session, station: Station, now: datetime) -> str:
     return _allocate_identifier(db, station, now, counter_type='CAS', prefix='CAS')
+
+
+def allocate_evidence_reference(db: Session, station: Station, now: datetime) -> str:
+    return _allocate_identifier(db, station, now, counter_type='EVIDENCE', prefix='EVD')

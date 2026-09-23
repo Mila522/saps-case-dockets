@@ -33,10 +33,11 @@ async def database_error(request: Request, exc: SQLAlchemyError):
 
 @app.middleware('http')
 async def protect_auth_responses(request: Request, call_next):
-    if settings.environment == 'production' and request.url.path.startswith('/api/v1/auth') and request.url.scheme != 'https':
+    protected = request.url.path.startswith(('/api/v1/auth', '/api/v1/complaints'))
+    if settings.environment == 'production' and protected and request.url.scheme != 'https':
         return JSONResponse(status_code=400, content={'detail': 'HTTPS is required'}, headers={'Cache-Control': 'no-store'})
     response = await call_next(request)
-    if request.url.path.startswith('/api/v1/auth'):
+    if protected:
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Pragma'] = 'no-cache'
     return response

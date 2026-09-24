@@ -133,7 +133,7 @@ def test_end_to_end_case_workflow(workflow_context, tmp_path, monkeypatch):
     assert db.scalar(select(func.count()).select_from(DocketStatusHistory).where(
         DocketStatusHistory.docket_id == uuid.UUID(docket))) == 4
     events = db.scalars(select(AuditLog).where(AuditLog.station_id == station.id)).all()
-    assert {'complaint.review', 'complaint.decide.accepted', 'docket.create', 'docket.review.approved',
+    assert {'complaint.review.start', 'complaint.decide.accepted', 'docket.create', 'docket.review.approved',
         'docket.assign', 'docket.view_assigned', 'case.add_note', 'case.update_status',
         'evidence.register', 'evidence.file.upload', 'evidence.custody.transferred',
         'evidence.custody.view', 'evidence.view'} <= {event.action for event in events}

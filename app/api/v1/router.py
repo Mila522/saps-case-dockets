@@ -7,6 +7,7 @@ from app.modules.investigations.router import router as investigations_router
 from app.modules.evidence.router import router as evidence_router
 from app.modules.feedback.router import router as feedback_router
 from app.modules.communications.router import router as communications_router
+from app.modules.stations.router import router as stations_router
 
 router = APIRouter(prefix='/v1')
 router.include_router(authentication_router)
@@ -17,3 +18,4 @@ router.include_router(investigations_router)
 router.include_router(evidence_router)
 router.include_router(feedback_router)
 router.include_router(communications_router)
+router.include_router(stations_router)

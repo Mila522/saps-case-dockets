@@ -27,6 +27,10 @@ docket creation, and commander approval APIs are documented in
 [Decisions and dockets](docs/decisions-dockets.md). They use the existing schema and
 do not add or modify a migration.
 
+The dependency-free charge officer and commander work queue is available at
+`/officer/` when the API is running. See [Officer UI](docs/officer-ui.md) for its
+role-scoped workflows and local run instructions.
+
 Collaborator C adds investigator assignments/reassignment, assigned-docket access,
 immutable notes, investigation status changes, evidence registration and custody,
 and protected file upload/download. See

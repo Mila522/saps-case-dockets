@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SAPS complaint and docket work queue for charge officers and station commanders.">
+  <title>SAPS Case Desk</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script type="module" src="assets/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <section class="auth-shell" id="auth-view" aria-labelledby="auth-title">
+    <div class="auth-brand" aria-hidden="true">
+      <div class="brand-mark">SAPS</div>
+      <p>Case Docket Management</p>
+      <h1>Clear decisions.<br>Accountable casework.</h1>
+      <p class="auth-brand-copy">A secure station workspace for reviewing complaints, handling escalations and progressing digital dockets.</p>
+    </div>
+
+    <div class="auth-panel">
+      <div class="auth-card">
+        <p class="eyebrow">Authorised personnel</p>
+        <h2 id="auth-title">Sign in to the case desk</h2>
+        <p class="muted">Use your issued account. Activity in this system is audited.</p>
+
+        <form id="login-form" class="form-stack">
+          <div class="field">
+            <label for="identifier">Username or email</label>
+            <input id="identifier" name="identifier" autocomplete="username" required maxlength="254">
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+          </div>
+          <button class="button button-primary button-block" type="submit">Continue securely</button>
+        </form>
+
+        <form id="mfa-form" class="form-stack" hidden>
+          <button class="text-button back-auth" type="button">← Back to sign in</button>
+          <div class="field">
+            <label for="mfa-code">Six-digit authentication code</label>
+            <input id="mfa-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required>
+            <p class="field-hint">Open your authenticator app and enter the current code.</p>
+          </div>
+          <button class="button button-primary button-block" type="submit">Verify and sign in</button>
+        </form>
+
+        <form id="setup-form" class="form-stack" hidden>
+          <button class="text-button back-auth" type="button">← Back to sign in</button>
+          <div class="setup-callout">
+            <strong>Set up multi-factor authentication</strong>
+            <p>Add this key to your authenticator app, then enter the six-digit code.</p>
+            <code id="setup-secret"></code>
+          </div>
+          <div class="field">
+            <label for="setup-code">Six-digit authentication code</label>
+            <input id="setup-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required>
+          </div>
+          <button class="button button-primary button-block" type="submit">Complete setup</button>
+        </form>
+
+        <div class="message" id="auth-message" role="alert" hidden></div>
+      </div>
+      <p class="security-note">Protected system · MFA required · Access is station and role scoped</p>
+    </div>
+  </section>
+
+  <div class="app-shell" id="app-view" hidden>
+    <header class="topbar">
+      <div class="brand-inline">
+        <span class="brand-mark brand-mark-small">SAPS</span>
+        <div><strong>Case Desk</strong><span>Station operations</span></div>
+      </div>
+      <div class="topbar-actions">
+        <div class="user-summary">
+          <span id="user-name">Officer</span>
+          <span class="role-badge" id="user-role">Role</span>
+        </div>
+        <button class="button button-quiet" id="logout-button" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <div class="sidebar-heading">
+          <span class="eyebrow">Operations</span>
+          <p>Today’s work</p>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item is-active" data-view="complaints" type="button">
+            <span class="nav-icon" aria-hidden="true">01</span><span>Complaint queue</span>
+          </button>
+          <button class="nav-item" data-view="escalations" type="button">
+            <span class="nav-icon" aria-hidden="true">02</span><span>Escalations</span>
+            <span class="nav-count" id="escalation-count" hidden>0</span>
+          </button>
+          <button class="nav-item" data-view="dockets" type="button">
+            <span class="nav-icon" aria-hidden="true">03</span><span>Dockets</span>
+          </button>
+        </nav>
+        <div class="sidebar-note">
+          <strong>Scope enforced</strong>
+          <p>Only records authorised for your role and station are shown.</p>
+        </div>
+      </aside>
+
+      <main id="main-content" class="main-content" tabindex="-1">
+        <div id="global-message" class="message global-message" role="status" aria-live="polite" hidden></div>
+
+        <section class="view is-active" id="complaints-view" aria-labelledby="complaints-title">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">Charge officer workflow</p>
+              <h1 id="complaints-title">Station complaints</h1>
+              <p>Review incoming complaints, record decisions and create dockets for accepted matters.</p>
+            </div>
+            <button class="button button-secondary refresh-button" data-refresh="complaints" type="button">Refresh queue</button>
+          </div>
+
+          <div class="metric-grid" aria-label="Complaint summary">
+            <article class="metric-card"><span>Awaiting review</span><strong id="metric-submitted">—</strong></article>
+            <article class="metric-card"><span>Under review</span><strong id="metric-review">—</strong></article>
+            <article class="metric-card"><span>Accepted</span><strong id="metric-accepted">—</strong></article>
+            <article class="metric-card"><span>Escalated</span><strong id="metric-escalated">—</strong></article>
+          </div>
+
+          <article class="surface">
+            <div class="surface-toolbar">
+              <div>
+                <h2>Complaint work queue</h2>
+                <p class="muted" id="complaint-result-count">Loading station complaints…</p>
+              </div>
+              <div class="field field-inline">
+                <label for="complaint-status">Status</label>
+                <select id="complaint-status">
+                  <option value="">All statuses</option>
+                  <option value="SUBMITTED">Submitted</option>
+                  <option value="UNDER_REVIEW">Under review</option>
+                  <option value="ACCEPTED">Accepted</option>
+                  <option value="REFUSED">Refused</option>
+                  <option value="ESCALATED">Escalated</option>
+                  <option value="DOCKET_CREATED">Docket created</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Reference</th><th>Category</th><th>Submitted</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+                <tbody id="complaint-table"></tbody>
+              </table>
+            </div>
+            <div class="empty-state" id="complaint-empty" hidden>
+              <strong>No complaints in this queue</strong><p>Try another status or refresh the queue.</p>
+            </div>
+          </article>
+        </section>
+
+        <section class="view" id="escalations-view" aria-labelledby="escalations-title" hidden>
+          <div class="page-heading">
+            <div><p class="eyebrow">Accountability workflow</p><h1 id="escalations-title">Refusal escalations</h1><p>Review and resolve escalated refusal decisions within your authorised scope.</p></div>
+            <button class="button button-secondary refresh-button" data-refresh="escalations" type="button">Refresh escalations</button>
+          </div>
+          <article class="surface">
+            <div class="surface-toolbar">
+              <div><h2>Escalation queue</h2><p class="muted" id="escalation-result-count">Loading escalations…</p></div>
+              <div class="field field-inline"><label for="escalation-status">Status</label><select id="escalation-status"><option value="">All statuses</option><option value="OPEN">Open</option><option value="ACKNOWLEDGED">Acknowledged</option><option value="RESOLVED">Resolved</option></select></div>
+            </div>
+            <div class="card-list" id="escalation-list"></div>
+            <div class="empty-state" id="escalation-empty" hidden><strong>No escalations found</strong><p>Your authorised escalation queue is clear.</p></div>
+          </article>
+        </section>
+
+        <section class="view" id="dockets-view" aria-labelledby="dockets-title" hidden>
+          <div class="page-heading">
+            <div><p class="eyebrow">Commander workflow</p><h1 id="dockets-title">Station dockets</h1><p>Approve or return pending dockets, then assign an investigating officer.</p></div>
+            <button class="button button-secondary refresh-button" data-refresh="dockets" type="button">Refresh dockets</button>
+          </div>
+          <article class="surface">
+            <div class="surface-toolbar">
+              <div><h2>Docket work queue</h2><p class="muted" id="docket-result-count">Loading station dockets…</p></div>
+              <div class="field field-inline"><label for="docket-status">Status</label><select id="docket-status"><option value="">All statuses</option><option value="PENDING_APPROVAL">Pending approval</option><option value="APPROVED">Approved</option><option value="ACTIVE">Active</option><option value="ON_HOLD">On hold</option><option value="CLOSED">Closed</option><option value="ARCHIVED">Archived</option></select></div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>CAS number</th><th>Complaint</th><th>Opened</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+                <tbody id="docket-table"></tbody>
+              </table>
+            </div>
+            <div class="empty-state" id="docket-empty" hidden><strong>No dockets found</strong><p>Try another status or refresh the queue.</p></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="complaint-dialog" aria-labelledby="complaint-dialog-title">
+    <form method="dialog" class="dialog-shell" id="complaint-action-form">
+      <div class="dialog-header"><div><p class="eyebrow">Complaint action</p><h2 id="complaint-dialog-title">Review complaint</h2></div><button class="icon-button dialog-close" value="cancel" aria-label="Close dialog">×</button></div>
+      <div class="record-summary" id="complaint-summary"></div>
+      <fieldset class="choice-group" id="decision-choice"><legend>Decision</legend><label class="choice-card"><input type="radio" name="decision" value="ACCEPTED"><span><strong>Accept complaint</strong><small>Confirm the matter and make it ready for docket creation.</small></span></label><label class="choice-card"><input type="radio" name="decision" value="REFUSED"><span><strong>Refuse complaint</strong><small>Record a controlled reason and any required notes.</small></span></label></fieldset>
+      <div id="refusal-fields" class="form-stack" hidden><div class="field"><label for="refusal-reason">Refusal reason</label><select id="refusal-reason" name="refusal_reason_id"><option value="">Select a controlled reason</option></select></div><div class="field"><label for="officer-notes">Officer notes <span id="notes-required"></span></label><textarea id="officer-notes" name="officer_notes" rows="4" maxlength="20000"></textarea></div></div>
+      <div class="message" id="complaint-dialog-message" role="alert" hidden></div>
+      <div class="dialog-actions"><button class="button button-quiet dialog-close" value="cancel">Cancel</button><button class="button button-primary" id="complaint-submit" type="submit">Confirm decision</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="resolve-dialog" aria-labelledby="resolve-dialog-title">
+    <form class="dialog-shell" id="resolve-form">
+      <div class="dialog-header"><div><p class="eyebrow">Escalation action</p><h2 id="resolve-dialog-title">Resolve escalation</h2></div><button class="icon-button dialog-close" type="button" aria-label="Close dialog">×</button></div>
+      <div class="field"><label for="resolution-notes">Resolution notes</label><textarea id="resolution-notes" rows="5" maxlength="20000" required></textarea><p class="field-hint">Explain the review outcome without including unnecessary personal information.</p></div>
+      <div class="message" id="resolve-message" role="alert" hidden></div>
+      <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Resolve escalation</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="docket-dialog" aria-labelledby="docket-dialog-title">
+    <form class="dialog-shell" id="docket-action-form">
+      <div class="dialog-header"><div><p class="eyebrow">Commander decision</p><h2 id="docket-dialog-title">Review docket</h2></div><button class="icon-button dialog-close" type="button" aria-label="Close dialog">×</button></div>
+      <div class="record-summary" id="docket-summary"></div>
+      <fieldset class="choice-group"><legend>Decision</legend><label class="choice-card"><input type="radio" name="docket-decision" value="APPROVED" required><span><strong>Approve docket</strong><small>Approve it for investigator assignment.</small></span></label><label class="choice-card"><input type="radio" name="docket-decision" value="RETURNED_FOR_CORRECTION"><span><strong>Return for correction</strong><small>Keep it pending and record what must be corrected.</small></span></label></fieldset>
+      <div class="field" id="docket-notes-field"><label for="docket-notes">Decision notes <span id="docket-notes-required"></span></label><textarea id="docket-notes" rows="4" maxlength="20000"></textarea></div>
+      <div class="message" id="docket-dialog-message" role="alert" hidden></div>
+      <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Record decision</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="assignment-dialog" aria-labelledby="assignment-dialog-title">
+    <form class="dialog-shell" id="assignment-form">
+      <div class="dialog-header"><div><p class="eyebrow">Case allocation</p><h2 id="assignment-dialog-title">Assign investigator</h2></div><button class="icon-button dialog-close" type="button" aria-label="Close dialog">×</button></div>
+      <div class="record-summary" id="assignment-summary"></div>
+      <div class="field"><label for="investigator">Investigating officer</label><select id="investigator" required><option value="">Select an active station investigator</option></select></div>
+      <div class="field"><label for="assignment-reason">Assignment reason</label><textarea id="assignment-reason" rows="3" maxlength="4000" required></textarea></div>
+      <div class="message" id="assignment-message" role="alert" hidden></div>
+      <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Assign officer</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

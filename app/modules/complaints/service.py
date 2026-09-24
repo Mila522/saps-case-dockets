@@ -10,9 +10,10 @@ from app.modules.audit.models import AuditLog
 from app.modules.complainants.models import Complainant
 from app.modules.complaints.models import Complaint
 from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage
-from app.modules.complaints.schemas import ComplaintRegistration
+from app.modules.complaints.schemas import ComplaintRegistration, StationComplaintOut, StationComplaintPage
+from app.modules.access.models import Role, UserRole
 from app.modules.authentication.security import utcnow
-from app.modules.stations.models import Station
+from app.modules.stations.models import Officer, Station
 from app.modules.system.service import allocate_complaint_reference
 
 
@@ -96,3 +97,75 @@ class ComplaintTrackingService:
         except Exception:
             self.db.rollback()
             raise
+
+
+class StationComplaintService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list(self, user_id: uuid.UUID, status: str | None,
+             *, limit: int, offset: int) -> StationComplaintPage:
+        try:
+            officer = self._officer(user_id, {'CHARGE_OFFICER', 'STATION_COMMANDER'})
+            query = select(Complaint).where(Complaint.station_id == officer.station_id)
+            if status:
+                query = query.where(Complaint.status == status)
+            rows = list(self.db.scalars(query.order_by(
+                Complaint.submitted_at.desc(), Complaint.id.desc()).limit(limit + 1).offset(offset)).all())
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            for row in rows:
+                self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                    action='complaint.view_station', entity_type='complaint',
+                                    entity_id=row.id, station_id=officer.station_id))
+            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                action='complaint.list_station', entity_type='station',
+                                entity_id=officer.station_id, station_id=officer.station_id))
+            result = StationComplaintPage(
+                items=[StationComplaintOut.model_validate(row) for row in rows],
+                limit=limit, offset=offset, has_more=has_more,
+            )
+            self.db.commit()
+            return result
+        except SQLAlchemyError:
+            self.db.rollback()
+            raise HTTPException(503, 'Station complaint queue unavailable') from None
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def start_review(self, user_id: uuid.UUID, complaint_id: uuid.UUID) -> StationComplaintOut:
+        try:
+            officer = self._officer(user_id, {'CHARGE_OFFICER'})
+            row = self.db.scalar(select(Complaint).where(
+                Complaint.id == complaint_id).with_for_update())
+            if row is None or row.station_id != officer.station_id:
+                raise HTTPException(404, 'Complaint not found')
+            if row.status != 'SUBMITTED':
+                raise HTTPException(409, f'Complaint cannot enter review from status {row.status}')
+            row.status = 'UNDER_REVIEW'
+            row.review_started_at = utcnow()
+            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                action='complaint.review.start', entity_type='complaint',
+                                entity_id=row.id, station_id=officer.station_id))
+            self.db.flush()
+            result = StationComplaintOut.model_validate(row)
+            self.db.commit()
+            return result
+        except SQLAlchemyError:
+            self.db.rollback()
+            raise HTTPException(503, 'Complaint review unavailable') from None
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def _officer(self, user_id: uuid.UUID, allowed_roles: set[str]) -> Officer:
+        roles = set(self.db.scalars(select(Role.code).join(UserRole).where(
+            UserRole.user_id == user_id, Role.code.in_(allowed_roles))).all())
+        if not roles:
+            raise HTTPException(403, 'Authorized station role required')
+        officer = self.db.scalar(select(Officer).where(
+            Officer.user_id == user_id, Officer.is_active.is_(True)))
+        if officer is None:
+            raise HTTPException(403, 'Active officer profile required')
+        return officer

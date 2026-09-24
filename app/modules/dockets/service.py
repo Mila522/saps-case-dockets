@@ -22,6 +22,33 @@ class DocketService:
     def __init__(self, db: Session):
         self.db = db
 
+    def list_for_commander(self, user_id: uuid.UUID, status: str | None,
+                           *, limit: int, offset: int) -> list[DocketOut]:
+        try:
+            officer = self._active_officer_with_role(user_id, 'STATION_COMMANDER')
+            query = select(Docket).join(Complaint, Complaint.id == Docket.complaint_id).where(
+                Complaint.station_id == officer.station_id)
+            if status:
+                query = query.where(Docket.status == status)
+            rows = list(self.db.scalars(query.order_by(
+                Docket.opened_at.desc(), Docket.id.desc()).limit(limit).offset(offset)).all())
+            for row in rows:
+                self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                    action='docket.view_station', entity_type='docket',
+                                    entity_id=row.id, station_id=officer.station_id))
+            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                action='docket.list_station', entity_type='station',
+                                entity_id=officer.station_id, station_id=officer.station_id))
+            result = [DocketOut.model_validate(row) for row in rows]
+            self.db.commit()
+            return result
+        except SQLAlchemyError:
+            self.db.rollback()
+            raise HTTPException(503, 'Docket queue unavailable') from None
+        except Exception:
+            self.db.rollback()
+            raise
+
     def open(self, user_id: uuid.UUID, complaint_id: uuid.UUID) -> DocketOut:
         try:
             officer = self._active_officer_with_role(user_id, 'CHARGE_OFFICER')

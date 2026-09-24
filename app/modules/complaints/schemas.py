@@ -24,6 +24,32 @@ class ComplaintTrackingPage(BaseModel):
     has_more: bool
 
 
+class StationComplaintOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    reference_number: str
+    status: str
+    station_id: uuid.UUID
+    channel: str
+    crime_category: str
+    incident_description: str
+    incident_occurred_at: datetime | None
+    incident_location: str
+    incident_city: str | None
+    incident_province: str
+    submitted_at: datetime
+    review_started_at: datetime | None
+    updated_at: datetime
+
+
+class StationComplaintPage(BaseModel):
+    items: list[StationComplaintOut]
+    limit: int
+    offset: int
+    has_more: bool
+
+
 class ComplaintRegistration(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 

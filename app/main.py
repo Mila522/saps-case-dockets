@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,6 +20,26 @@ app = FastAPI(
 )
 app.add_middleware(EvidenceUploadLimit)
 app.include_router(api_router)
+
+officer_frontend_root = Path(__file__).resolve().parents[1] / 'frontend' / 'officer'
+app.mount('/officer/assets', StaticFiles(directory=officer_frontend_root / 'assets'), name='officer-assets')
+
+
+@app.get('/officer/', include_in_schema=False)
+def officer_frontend():
+    return FileResponse(officer_frontend_root / 'index.html', headers={
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
+                                   "style-src 'self'; script-src 'self'; object-src 'none'; "
+                                   "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+    })
+
+
+@app.get('/officer', include_in_schema=False)
+def officer_frontend_redirect():
+    return RedirectResponse('/officer/', status_code=307)
 
 
 @app.exception_handler(RequestValidationError)
@@ -37,7 +60,8 @@ async def database_error(request: Request, exc: SQLAlchemyError):
 async def protect_auth_responses(request: Request, call_next):
     protected = request.url.path.startswith(('/api/v1/auth', '/api/v1/complaints',
                                               '/api/v1/dockets', '/api/v1/refusal-',
-                                              '/api/v1/investigations', '/api/v1/evidence'))
+                                              '/api/v1/investigations', '/api/v1/evidence',
+                                              '/api/v1/stations'))
     if settings.environment == 'production' and protected and request.url.scheme != 'https':
         return JSONResponse(status_code=400, content={'detail': 'HTTPS is required'}, headers={'Cache-Control': 'no-store'})
     response = await call_next(request)

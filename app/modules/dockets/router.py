@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -14,6 +15,15 @@ router = APIRouter(tags=['Dockets'])
 
 def get_docket_service(db: Session = Depends(get_db)) -> DocketService:
     return DocketService(db)
+
+
+@router.get('/dockets', response_model=list[DocketOut])
+def list_station_dockets(
+        status: Literal['PENDING_APPROVAL', 'APPROVED', 'ACTIVE', 'ON_HOLD', 'CLOSED', 'ARCHIVED'] | None = None,
+        limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+        user: User = Depends(require_permission('docket.approve')),
+        service: DocketService = Depends(get_docket_service)):
+    return service.list_for_commander(user.id, status, limit=limit, offset=offset)
 
 
 @router.post('/complaints/{complaint_id}/dockets', response_model=DocketOut, status_code=201)

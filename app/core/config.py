@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     account_lock_minutes: int = Field(default=15, gt=0)
     mfa_challenge_expire_minutes: int = Field(default=5, gt=0, le=10)
     evidence_storage_path: Path = Path(__file__).resolve().parents[2] / '.evidence-storage'
+    document_storage_path: Path = Path(__file__).resolve().parents[2] / '.document-storage'
+    alert_inactivity_days: int = Field(default=7, ge=1, le=365)
+    alert_docket_approval_hours: int = Field(default=48, ge=1, le=8760)
+    alert_escalation_hours: int = Field(default=24, ge=1, le=8760)
     evidence_max_file_bytes: int = Field(default=25 * 1024 * 1024, gt=0, le=100 * 1024 * 1024)
 
     @field_validator('jwt_secret_key')

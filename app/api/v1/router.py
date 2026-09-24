@@ -5,6 +5,8 @@ from app.modules.dockets.router import router as docket_router
 from app.modules.refusals.router import router as refusals_router
 from app.modules.investigations.router import router as investigations_router
 from app.modules.evidence.router import router as evidence_router
+from app.modules.feedback.router import router as feedback_router
+from app.modules.communications.router import router as communications_router
 
 router = APIRouter(prefix='/v1')
 router.include_router(authentication_router)
@@ -13,3 +15,5 @@ router.include_router(refusals_router)
 router.include_router(docket_router)
 router.include_router(investigations_router)
 router.include_router(evidence_router)
+router.include_router(feedback_router)
+router.include_router(communications_router)

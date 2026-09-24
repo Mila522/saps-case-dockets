@@ -14,6 +14,7 @@ from app.modules.dockets.schemas import DocketOut
 from app.modules.investigations.models import CaseAssignment, DocketStatusHistory, InvestigationNote
 from app.modules.investigations.schemas import AssignmentOut, NoteOut
 from app.modules.stations.models import Officer, Station
+from app.modules.communications.notifications import notify_complainant
 
 
 def transactional(method):
@@ -103,6 +104,8 @@ class InvestigationService:
             self.transition(docket, user_id, 'ACTIVE', 'Investigator assigned')
         self.db.flush()
         self.audit(user_id, commander.station_id, 'docket.assign', 'case_assignment', row.id)
+        notify_complainant(self.db, self.db.get(Complaint, docket.complaint_id),
+            'docket.assigned', docket_id=docket.id, actor_user_id=user_id)
         return AssignmentOut.model_validate(row)
 
     @transactional
@@ -178,4 +181,6 @@ class InvestigationService:
             raise HTTPException(409, 'Invalid investigation status transition')
         self.transition(docket, user_id, data.status, data.reason)
         self.audit(user_id, officer.station_id, 'case.update_status', 'docket', docket.id)
+        notify_complainant(self.db, self.db.get(Complaint, docket.complaint_id),
+            'case.' + data.status.lower(), docket_id=docket.id, actor_user_id=user_id)
         return DocketOut.model_validate(docket)

@@ -16,6 +16,7 @@ from app.modules.investigations.models import DocketStatusHistory
 from app.modules.refusals.models import ComplaintDecision
 from app.modules.stations.models import Officer, Station
 from app.modules.system.service import allocate_cas_number
+from app.modules.communications.notifications import notify_complainant
 
 
 class DocketService:
@@ -62,6 +63,7 @@ class DocketService:
                                 action='docket.create', entity_type='docket',
                                 entity_id=docket.id, station_id=officer.station_id))
             result = DocketOut.model_validate(docket)
+            notify_complainant(self.db, complaint, 'docket.created', docket_id=docket.id, actor_user_id=user_id)
             self.db.commit()
             return result
         except SQLAlchemyError:

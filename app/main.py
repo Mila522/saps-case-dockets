@@ -40,7 +40,9 @@ async def database_error(request: Request, exc: SQLAlchemyError):
 async def protect_auth_responses(request: Request, call_next):
     protected = request.url.path.startswith(('/api/v1/auth', '/api/v1/complaints',
                                               '/api/v1/dockets', '/api/v1/refusal-',
-                                              '/api/v1/investigations', '/api/v1/evidence'))
+                                              '/api/v1/investigations', '/api/v1/evidence',
+                                              '/api/v1/notifications', '/api/v1/documents',
+                                              '/api/v1/alerts', '/api/v1/dashboards'))
     if settings.environment == 'production' and protected and request.url.scheme != 'https':
         return JSONResponse(status_code=400, content={'detail': 'HTTPS is required'}, headers={'Cache-Control': 'no-store'})
     response = await call_next(request)

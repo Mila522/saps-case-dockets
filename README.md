@@ -1,6 +1,12 @@
 # saps-case-dockets
 An academic prototype exploring requirements and system design for improving the registration, tracking, accountability, and digital management of SAPS case dockets.
 
+Collaborator D adds scoped feedback, transactional in-app notifications, private
+printable confirmations, operational alerts, and dashboard APIs. See
+[Collaborator D APIs](docs/collaborator-d-api.md) for routes, authorization,
+configuration, default policies, and successful full-suite verification.
+It reuses the existing schema without adding or modifying migrations.
+
 Authentication is now available under `/api/v1/auth`: complainant registration,
 password login, mandatory TOTP enrollment/verification, rotating refresh tokens,
 logout, and current-user/RBAC dependencies. See [Authentication](docs/authentication.md)

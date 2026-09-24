@@ -16,6 +16,7 @@ from app.modules.refusals.schemas import (ComplaintDecisionOut, ComplaintDecisio
 from app.modules.authentication.security import utcnow
 from app.modules.access.models import Role, UserRole
 from app.modules.stations.models import Officer
+from app.modules.communications.notifications import notify_complainant
 
 DECIDABLE_STATUSES = {'SUBMITTED', 'UNDER_REVIEW'}
 
@@ -127,6 +128,7 @@ class ComplaintDecisionService:
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
                                 action=f'complaint.decide.{data.decision.lower()}', entity_type='complaint',
                                 entity_id=complaint_id, station_id=officer.station_id))
+            notify_complainant(self.db, complaint, f'complaint.{data.decision.lower()}', actor_user_id=user_id)
             self.db.commit()
             return result
         except SQLAlchemyError:

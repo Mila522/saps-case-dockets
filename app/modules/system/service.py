@@ -40,3 +40,7 @@ def allocate_cas_number(db: Session, station: Station, now: datetime) -> str:
 
 def allocate_evidence_reference(db: Session, station: Station, now: datetime) -> str:
     return _allocate_identifier(db, station, now, counter_type='EVIDENCE', prefix='EVD')
+
+
+def allocate_document_number(db: Session, station: Station, now: datetime) -> str:
+    return _allocate_identifier(db, station, now, counter_type='DOCUMENT', prefix='DOC')

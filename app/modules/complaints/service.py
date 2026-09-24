@@ -14,6 +14,7 @@ from app.modules.complaints.schemas import ComplaintRegistration
 from app.modules.authentication.security import utcnow
 from app.modules.stations.models import Station
 from app.modules.system.service import allocate_complaint_reference
+from app.modules.communications.notifications import notify_complainant
 
 
 class ComplaintRegistrationService:
@@ -41,6 +42,7 @@ class ComplaintRegistrationService:
             self.db.add(row)
             self.db.flush()
             result = ComplaintTracking.model_validate(row)
+            notify_complainant(self.db, row, 'complaint.registered', actor_user_id=user_id)
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
                                 action='complaint.submit', entity_type='complaint',
                                 entity_id=row.id, station_id=station.id))

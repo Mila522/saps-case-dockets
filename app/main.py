@@ -8,7 +8,9 @@ from app.db.session import engine
 from app.db import models  # noqa: F401 -- register mappings before authentication queries
 from app.api.router import router as api_router
 from app.core.config import settings
+from fastapi.staticfiles import StaticFiles
 from app.modules.evidence.middleware import EvidenceUploadLimit
+
 
 
 app = FastAPI(
@@ -17,6 +19,7 @@ app = FastAPI(
 )
 app.add_middleware(EvidenceUploadLimit)
 app.include_router(api_router)
+app.mount("/portal", StaticFiles(directory="app/frontend", html=True), name="portal")
 
 
 @app.exception_handler(RequestValidationError)

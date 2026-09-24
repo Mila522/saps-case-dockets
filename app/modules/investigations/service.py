@@ -56,7 +56,7 @@ class InvestigationService:
         # status update or evidence operation authorized against an old assignment.
         docket = self.db.scalar(select(Docket).join(Complaint).where(
             Docket.id == docket_id, Complaint.station_id == officer.station_id)
-            .with_for_update(of=Docket))
+            .with_for_update(of=Docket).execution_options(populate_existing=True))
         if docket is None:
             raise HTTPException(404, 'Docket not found')
         if not commander:
@@ -165,6 +165,8 @@ class InvestigationService:
     @transactional
     def update_status(self, user_id, docket_id, data):
         officer, docket = self.scope(user_id, docket_id, writable=True)
+        if docket.status != data.expected_status:
+            raise HTTPException(409, 'Docket status changed; refresh before retrying')
         if data.status == 'CLOSED':
             allowed = self.db.scalar(select(Permission.id).join(RolePermission).join(UserRole,
                 UserRole.role_id == RolePermission.role_id).where(

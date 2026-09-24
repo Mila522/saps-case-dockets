@@ -89,15 +89,15 @@ def test_notes_status_history_and_closed_case_guards(investigation):
         json={'content': '  '}).status_code == 422
     assert client.get(f'/api/v1/dockets/{docket}/notes?limit=1', headers=headers).json()[0]['id'] == note.json()['id']
     assert client.get(f'/api/v1/dockets/{docket}/notes?limit=101', headers=headers).status_code == 422
-    for status in ('ON_HOLD', 'ACTIVE', 'CLOSED'):
+    for expected, status in (('ACTIVE', 'ON_HOLD'), ('ON_HOLD', 'ACTIVE'), ('ACTIVE', 'CLOSED')):
         response = client.post(f'/api/v1/dockets/{docket}/status', headers=headers,
-            json={'status': status, 'reason': 'Documented transition'})
+            json={'status': status, 'expected_status': expected, 'reason': 'Documented transition'})
         assert response.status_code == 200, response.text
     assert response.json()['closed_at'] and response.json()['closure_reason']
     assert client.post(f'/api/v1/dockets/{docket}/notes', headers=headers,
         json={'content': 'Late note'}).status_code == 409
     assert client.post(f'/api/v1/dockets/{docket}/status', headers=headers,
-        json={'status': 'ACTIVE', 'reason': 'Reopen'}).status_code == 409
+        json={'status': 'ACTIVE', 'expected_status': 'ACTIVE', 'reason': 'Reopen'}).status_code == 409
     history = db.scalars(select(DocketStatusHistory).where(DocketStatusHistory.docket_id == uuid.UUID(docket))
         .order_by(DocketStatusHistory.changed_at)).all()
     assert [row.to_status for row in history] == ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE', 'ON_HOLD', 'ACTIVE', 'CLOSED']
@@ -145,16 +145,19 @@ def test_custody_transitions_preserve_current_state_and_history(investigation):
     item = evidence(investigation)
     url = f'/api/v1/evidence/{item}/custody-events'
     transfer = client.post(url, headers=headers, json={'event_type': 'TRANSFERRED',
+        'expected_custody_event_id': client.get(f'/api/v1/evidence/{item}', headers=headers).json()['custody_version'],
         'to_custodian_officer_id': str(other.id), 'to_location': 'Laboratory', 'notes': 'Signed handover'})
     assert transfer.status_code == 201
     assert transfer.json()['from_custodian_officer_id'] == str(first.id)
     for kind in ('ANALYSIS_STARTED', 'ANALYSIS_COMPLETED', 'RELEASED'):
         assert client.post(url, headers=headers, json={'event_type': kind,
+            'expected_custody_event_id': client.get(f'/api/v1/evidence/{item}', headers=headers).json()['custody_version'],
             'to_location': 'Laboratory', 'notes': 'Recorded action'}).status_code == 201
     db.expire_all()
     stored = db.get(EvidenceItem, uuid.UUID(item))
     assert stored.status == 'RELEASED' and stored.current_custodian_officer_id is None
     assert client.post(url, headers=headers, json={'event_type': 'DISPOSED',
+        'expected_custody_event_id': client.get(f'/api/v1/evidence/{item}', headers=headers).json()['custody_version'],
         'to_location': 'Store', 'notes': 'Invalid followup'}).status_code == 409
     assert client.post(f'/api/v1/evidence/{item}/files', headers=headers,
         files={'file': ('new.txt', b'late')}).status_code == 409
@@ -244,7 +247,7 @@ def test_mismatched_file_missing_object_and_permission_revocation(investigation)
     db.execute(text('SET LOCAL ROLE saps_api'))
     db.commit()
     assert client.post(f'/api/v1/dockets/{investigation[2]}/status', headers=headers,
-        json={'status': 'CLOSED', 'reason': 'Not permitted'}).status_code == 403
+        json={'status': 'CLOSED', 'expected_status': 'ACTIVE', 'reason': 'Not permitted'}).status_code == 403
 
 
 def test_request_body_limits_cover_declared_and_chunked_uploads(workflow_context, monkeypatch):

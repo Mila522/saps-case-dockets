@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
 from app.modules.complaints.models import Complaint
+from app.modules.complaints.schemas import ComplaintTracking
 from app.modules.refusals.models import ComplaintDecision, RefusalEscalation, RefusalReason
 from app.modules.refusals.schemas import (ComplaintDecisionOut, ComplaintDecisionRequest,
                                           EscalationResolutionRequest, RefusalEscalationOut,
@@ -22,6 +23,37 @@ DECIDABLE_STATUSES = {'SUBMITTED', 'UNDER_REVIEW'}
 class ComplaintDecisionService:
     def __init__(self, db: Session):
         self.db = db
+
+    def start_review(self, user_id: uuid.UUID, complaint_id: uuid.UUID) -> ComplaintTracking:
+        """Explicit review step needed by the A-to-B-to-C workflow."""
+        try:
+            officer = self.db.scalar(select(Officer).where(
+                Officer.user_id == user_id, Officer.is_active.is_(True)))
+            role = self.db.scalar(select(Role.id).join(UserRole).where(
+                UserRole.user_id == user_id, Role.code == 'CHARGE_OFFICER'))
+            if officer is None or role is None:
+                raise HTTPException(403, 'Active charge officer required')
+            complaint = self.db.scalar(select(Complaint).where(
+                Complaint.id == complaint_id, Complaint.station_id == officer.station_id).with_for_update())
+            if complaint is None:
+                raise HTTPException(404, 'Complaint not found')
+            if complaint.status != 'SUBMITTED':
+                raise HTTPException(409, 'Only a submitted complaint can start review')
+            complaint.status = 'UNDER_REVIEW'
+            complaint.review_started_at = utcnow()
+            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                action='complaint.review', entity_type='complaint', entity_id=complaint.id,
+                station_id=officer.station_id))
+            self.db.flush()
+            result = ComplaintTracking.model_validate(complaint)
+            self.db.commit()
+            return result
+        except SQLAlchemyError:
+            self.db.rollback()
+            raise HTTPException(503, 'Complaint review unavailable') from None
+        except Exception:
+            self.db.rollback()
+            raise
 
     def decide(self, user_id: uuid.UUID, complaint_id: uuid.UUID,
                data: ComplaintDecisionRequest) -> ComplaintDecisionOut:

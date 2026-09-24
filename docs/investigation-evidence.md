@@ -4,6 +4,11 @@ Built on the merged complaint and docket APIs at `a8898e5`. No model, seed, or
 migration changes. The shared counter allocator now also issues prototype
 `EVD-{station}-{Johannesburg year}-{number}` references in the evidence transaction.
 
+For the verified A-to-B-to-C demo sequence and concurrency preconditions, see
+[Integration verification and Swagger demo](investigation-evidence-api.md).
+Status requests now require `expected_status`; custody requests require
+`expected_custody_event_id` from the evidence response's `custody_version`.
+
 ## Access and workflow
 
 Every route requires an active authenticated MFA/session user and its existing
@@ -150,8 +155,9 @@ prepare approved dockets, then switches C operations to the restricted runtime
 role. Files use pytest temporary directories. Coverage includes assignment
 history/revocation, station scope, role/permission checks, notes, status history,
 closure, custody transitions, uploads, versions, downloads, tampering, missing
-files, request/file size limits and audit-failure rollback. Real multi-connection
-race tests, load testing and deployment ACL verification remain shared QA work.
+files, request/file size limits and audit-failure rollback. Dedicated end-to-end,
+contract and real multi-connection concurrency tests extend this coverage.
+Load testing and deployment ACL verification remain shared QA work.
 
 C leaves D's feedback, notifications, documents, alerts and dashboards untouched.
 Shared QA can extend the existing audit events; do not duplicate numbering,

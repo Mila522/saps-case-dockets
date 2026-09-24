@@ -13,12 +13,22 @@ from app.modules.system.service import allocate_evidence_reference
 
 
 class EvidenceService(InvestigationService):
+    def custody_version(self, item):
+        return self.db.scalar(select(EvidenceCustodyEvent.id).where(
+            EvidenceCustodyEvent.evidence_item_id == item.id,
+            EvidenceCustodyEvent.event_type != 'ACCESSED').order_by(
+                EvidenceCustodyEvent.occurred_at.desc(), EvidenceCustodyEvent.id.desc()).limit(1))
+
+    def evidence_out(self, item):
+        return EvidenceOut.model_validate(item).model_copy(update={'custody_version': self.custody_version(item)})
+
     def item_scope(self, user_id, evidence_id, *, writable=False):
         docket_id = self.db.scalar(select(EvidenceItem.docket_id).where(EvidenceItem.id == evidence_id))
         if docket_id is None:
             raise HTTPException(404, 'Evidence not found')
         officer, docket = self.scope(user_id, docket_id, writable=writable)
-        item = self.db.scalar(select(EvidenceItem).where(EvidenceItem.id == evidence_id).with_for_update())
+        item = self.db.scalar(select(EvidenceItem).where(EvidenceItem.id == evidence_id)
+            .with_for_update().execution_options(populate_existing=True))
         if writable and item.status in ('RELEASED', 'DISPOSED'):
             raise HTTPException(409, 'Evidence is no longer in active custody')
         return officer, docket, item
@@ -39,14 +49,15 @@ class EvidenceService(InvestigationService):
             performed_by_user_id=user_id, to_custodian_officer_id=officer.id,
             to_location=data.storage_location, occurred_at=utcnow()))
         self.audit(user_id, officer.station_id, 'evidence.register', 'evidence_item', row.id)
-        return EvidenceOut.model_validate(row)
+        self.db.flush()
+        return self.evidence_out(row)
 
     @transactional
     def list_items(self, user_id, docket_id, limit, offset):
         officer, docket = self.scope(user_id, docket_id)
         rows = self.db.scalars(select(EvidenceItem).where(EvidenceItem.docket_id == docket.id)
             .order_by(EvidenceItem.registered_at, EvidenceItem.id).limit(limit).offset(offset))
-        result = [EvidenceOut.model_validate(row) for row in rows]
+        result = [self.evidence_out(row) for row in rows]
         self.audit(user_id, officer.station_id, 'evidence.list', 'docket', docket.id)
         return result
 
@@ -54,11 +65,13 @@ class EvidenceService(InvestigationService):
     def get_item(self, user_id, evidence_id):
         officer, _, item = self.item_scope(user_id, evidence_id)
         self.audit(user_id, officer.station_id, 'evidence.view', 'evidence_item', item.id)
-        return EvidenceOut.model_validate(item)
+        return self.evidence_out(item)
 
     @transactional
     def custody(self, user_id, evidence_id, data):
         officer, _, item = self.item_scope(user_id, evidence_id, writable=True)
+        if data.expected_custody_event_id != self.custody_version(item):
+            raise HTTPException(409, 'Evidence custody changed; refresh before retrying')
         transitions = {
             'TRANSFERRED': ({'IN_CUSTODY', 'TRANSFERRED'}, 'TRANSFERRED'),
             'ANALYSIS_STARTED': ({'IN_CUSTODY', 'TRANSFERRED'}, 'UNDER_ANALYSIS'),

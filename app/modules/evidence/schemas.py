@@ -9,6 +9,10 @@ from app.modules.investigations.schemas import RequestModel
 
 
 class EvidenceRequest(RequestModel):
+    model_config = ConfigDict(json_schema_extra={'examples': [{
+        'title': 'Camera recording', 'description': 'Recording supplied for investigation',
+        'evidence_type': 'VIDEO', 'is_digital': True, 'storage_location': 'Secure locker A',
+    }]})
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1, max_length=20000)
     evidence_type: Literal['DOCUMENT', 'IMAGE', 'VIDEO', 'AUDIO', 'PHYSICAL_OBJECT', 'DIGITAL_DEVICE', 'OTHER']
@@ -41,9 +45,18 @@ class EvidenceOut(BaseModel):
     status: str
     current_custodian_officer_id: uuid.UUID | None
     current_storage_location: str | None
+    custody_version: uuid.UUID | None = Field(default=None,
+        description='Latest custody-changing event ID; submit as expected_custody_event_id when changing custody.')
 
 
 class CustodyRequest(RequestModel):
+    model_config = ConfigDict(json_schema_extra={'examples': [{
+        'event_type': 'TRANSFERRED', 'expected_custody_event_id': '00000000-0000-4000-8000-000000000001',
+        'to_custodian_officer_id': '00000000-0000-4000-8000-000000000002',
+        'to_location': 'Laboratory locker B', 'notes': 'Signed handover recorded',
+    }]})
+    expected_custody_event_id: uuid.UUID = Field(
+        description='custody_version from the latest evidence response. Stale values return 409.')
     event_type: Literal['TRANSFERRED', 'ANALYSIS_STARTED', 'ANALYSIS_COMPLETED', 'RELEASED', 'DISPOSED']
     to_custodian_officer_id: uuid.UUID | None = None
     to_location: str = Field(min_length=1, max_length=255)

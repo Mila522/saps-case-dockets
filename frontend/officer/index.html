@@ -114,9 +114,9 @@
             <div>
               <p class="eyebrow">Charge officer workflow</p>
               <h1 id="complaints-title">Station complaints</h1>
-              <p>Review incoming complaints, record decisions and create dockets for accepted matters.</p>
+              <p>Review incoming complaints. Accepting a criminal complaint creates its docket and CAS number automatically.</p>
             </div>
-            <button class="button button-secondary refresh-button" data-refresh="complaints" type="button">Refresh queue</button>
+            <div class="actions"><button id="intake-open" class="button button-primary" type="button" hidden>Register walk-in complaint</button><button class="button button-secondary refresh-button" data-refresh="complaints" type="button">Refresh queue</button></div>
           </div>
 
           <div class="metric-grid" aria-label="Complaint summary">
@@ -236,5 +236,7 @@
       <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Assign officer</button></div>
     </form>
   </dialog>
+<dialog id="intake-dialog" aria-labelledby="intake-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="intake-title">In-station complaint intake</h2><div id="intake-content"></div></dialog>
+<dialog id="materials-dialog" aria-labelledby="materials-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="materials-title">Docket statements and witnesses</h2><div id="materials-content"></div></dialog>
 </body>
 </html>

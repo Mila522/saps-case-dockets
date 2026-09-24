@@ -8,10 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
 from app.modules.complainants.models import Complainant
-from app.modules.complaints.models import Complaint
+from app.modules.complaints.models import Complaint, ComplaintStatement, Witness, WitnessStatement
 from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage
 from app.modules.complaints.schemas import ComplaintRegistration, StationComplaintOut, StationComplaintPage
-from app.modules.access.models import Role, UserRole
+from app.modules.access.models import Role, UserRole, User
+from app.modules.dockets.models import Docket
 from app.modules.authentication.security import utcnow
 from app.modules.stations.models import Officer, Station
 from app.modules.system.service import allocate_complaint_reference
@@ -42,6 +43,7 @@ class ComplaintRegistrationService:
                             submitted_at=now)
             self.db.add(row)
             self.db.flush()
+            self.db.add(ComplaintStatement(complaint_id=row.id, statement_text=data.incident_description, statement_version=1, is_current=True))
             result = ComplaintTracking.model_validate(row)
             notify_complainant(self.db, row, 'complaint.registered', actor_user_id=user_id)
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
@@ -61,20 +63,24 @@ class ComplaintTrackingService:
     def __init__(self, db: Session):
         self.db = db
 
+    def tracking_out(self, row):
+        cas = self.db.scalar(select(Docket.cas_number).where(Docket.complaint_id == row.id))
+        return ComplaintTracking.model_validate(row).model_copy(update={'cas_number': cas})
+
     def track(self, user_id: uuid.UUID, complaint_id: uuid.UUID | None = None,
-              *, limit: int = 20, offset: int = 0):
+              *, limit: int = 20, offset: int = 0, reference_number: str | None = None):
         try:
             owner_id = self.db.scalar(select(Complainant.id).where(Complainant.user_id == user_id))
             if owner_id is None:
                 raise HTTPException(403, 'Linked complainant profile required')
             query = select(Complaint).where(Complaint.complainant_id == owner_id)
-            if complaint_id is not None:
-                row = self.db.scalar(query.where(Complaint.id == complaint_id))
+            if complaint_id is not None or reference_number is not None:
+                row = self.db.scalar(query.where(Complaint.id == complaint_id) if complaint_id is not None else query.where(Complaint.reference_number == reference_number))
                 if row is None:
                     # Identical response for missing and another person's complaint.
                     raise HTTPException(404, 'Complaint not found')
                 rows = [row]
-                result = ComplaintTracking.model_validate(row)
+                result = self.tracking_out(row)
             else:
                 if not 1 <= limit <= 100 or offset < 0:
                     raise HTTPException(422, 'Invalid pagination')
@@ -82,13 +88,13 @@ class ComplaintTrackingService:
                                            .limit(limit + 1).offset(offset)).all())
                 has_more = len(rows) > limit
                 rows = rows[:limit]
-                result = ComplaintTrackingPage(items=[ComplaintTracking.model_validate(row) for row in rows],
+                result = ComplaintTrackingPage(items=[self.tracking_out(row) for row in rows],
                                                limit=limit, offset=offset, has_more=has_more)
             for row in rows:
                 self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
                                     action='complaint.track_own', entity_type='complaint',
                                     entity_id=row.id, station_id=row.station_id))
-            if complaint_id is None:
+            if complaint_id is None and reference_number is None:
                 self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
                                     action='complaint.list_own', entity_type='complainant', entity_id=owner_id))
             self.db.commit()
@@ -104,6 +110,11 @@ class ComplaintTrackingService:
 class StationComplaintService:
     def __init__(self, db: Session):
         self.db = db
+
+    def station_out(self, row):
+        docket = self.db.scalar(select(Docket).where(Docket.complaint_id == row.id))
+        return StationComplaintOut.model_validate(row).model_copy(update={
+            'docket_id': docket.id if docket else None, 'cas_number': docket.cas_number if docket else None})
 
     def list(self, user_id: uuid.UUID, status: str | None,
              *, limit: int, offset: int) -> StationComplaintPage:
@@ -124,7 +135,7 @@ class StationComplaintService:
                                 action='complaint.list_station', entity_type='station',
                                 entity_id=officer.station_id, station_id=officer.station_id))
             result = StationComplaintPage(
-                items=[StationComplaintOut.model_validate(row) for row in rows],
+                items=[self.station_out(row) for row in rows],
                 limit=limit, offset=offset, has_more=has_more,
             )
             self.db.commit()
@@ -140,7 +151,7 @@ class StationComplaintService:
         try:
             officer = self._officer(user_id, {'CHARGE_OFFICER'})
             row = self.db.scalar(select(Complaint).where(
-                Complaint.id == complaint_id).with_for_update())
+                Complaint.id == complaint_id).with_for_update().execution_options(populate_existing=True))
             if row is None or row.station_id != officer.station_id:
                 raise HTTPException(404, 'Complaint not found')
             if row.status != 'SUBMITTED':
@@ -151,7 +162,7 @@ class StationComplaintService:
                                 action='complaint.review.start', entity_type='complaint',
                                 entity_id=row.id, station_id=officer.station_id))
             self.db.flush()
-            result = StationComplaintOut.model_validate(row)
+            result = self.station_out(row)
             self.db.commit()
             return result
         except SQLAlchemyError:
@@ -166,8 +177,8 @@ class StationComplaintService:
             UserRole.user_id == user_id, Role.code.in_(allowed_roles))).all())
         if not roles:
             raise HTTPException(403, 'Authorized station role required')
-        officer = self.db.scalar(select(Officer).where(
-            Officer.user_id == user_id, Officer.is_active.is_(True)))
+        officer = self.db.scalar(select(Officer).join(Station, Station.id == Officer.station_id).join(User, User.id == Officer.user_id).where(
+            Officer.user_id == user_id, Officer.is_active.is_(True), Station.is_active.is_(True), User.is_active.is_(True)).with_for_update(read=True, of=Officer))
         if officer is None:
             raise HTTPException(403, 'Active officer profile required')
         return officer

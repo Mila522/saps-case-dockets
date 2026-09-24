@@ -47,6 +47,18 @@ details. Audit records contain actor, complaint and station IDs, never the narra
 No migration is required. Repeated successful POSTs create separate complaints;
 this endpoint does not implement an idempotency-key protocol.
 
+The supplied incident description is now also preserved verbatim as version 1 in
+`complaint_statements`; no witness, evidence, signature or additional narrative is
+invented. Staff append corrections as new versions rather than overwriting it.
+
+`POST /api/v1/complaints/in-station` provides the separate charge-officer workflow.
+It requires `complaint.register`, a live charge-officer profile at an active station,
+new complainant details and explicit confirmation with that complainant. It derives
+the receiving station and responsible officer; caller-supplied owner/officer/station
+IDs are rejected. It creates an **unlinked** walk-in profile, not a claim on an existing
+online account. See [A–C review](ac-workflow-review.md) for fields, material routes,
+privacy limits and the D handoff.
+
 Run `python -m pytest tests/test_complaint_registration.py tests/test_complaint_tracking.py tests/test_authentication.py`
 with the project dependencies and migrated PostgreSQL test database configured.
 Integration fixtures roll back their records, including service commits.

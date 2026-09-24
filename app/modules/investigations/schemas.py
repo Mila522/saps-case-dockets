@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from app.modules.dockets.schemas import DocketOut
 
 
 class RequestModel(BaseModel):
@@ -11,6 +12,30 @@ class RequestModel(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str | list[dict]
+
+
+class InvestigatorDocketOut(DocketOut):
+    allowed_next_statuses: list[str] = Field(default_factory=list)
+    complaint_reference: str
+    crime_category: str
+    station_id: uuid.UUID
+    station_name: str
+    assigned_at: datetime
+    investigating_officer_id: uuid.UUID
+    updated_at: datetime
+    incident_description: str | None = None
+    incident_occurred_at: datetime | None = None
+    incident_location: str | None = None
+
+
+class StatusHistoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    from_status: str | None
+    to_status: str
+    changed_by_user_id: uuid.UUID
+    change_reason: str | None
+    changed_at: datetime
 
 
 ERROR_RESPONSES = {code: {'model': ErrorResponse, 'description': description} for code, description in {

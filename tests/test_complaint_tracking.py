@@ -50,7 +50,7 @@ def test_tracking_ownership_pagination_and_audit(auth_context):
     detail = client.get(f'/api/v1/complaints/{first.id}/tracking', headers=headers)
     assert detail.status_code == 200
     assert set(detail.json()) == {'id', 'reference_number', 'status', 'station_id', 'submitted_at',
-                                  'review_started_at', 'updated_at'}
+                                  'review_started_at', 'updated_at', 'cas_number'}
     assert detail.json()['status'] == 'SUBMITTED'
     denied = client.get(f'/api/v1/complaints/{foreign.id}/tracking', headers=headers)
     missing = client.get(f'/api/v1/complaints/{uuid.uuid4()}/tracking', headers=headers)

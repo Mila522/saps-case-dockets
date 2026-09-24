@@ -54,43 +54,26 @@ class DocketService:
         try:
             officer = self._active_officer_with_role(user_id, 'CHARGE_OFFICER')
             complaint = self.db.scalar(select(Complaint).where(
-                Complaint.id == complaint_id).with_for_update())
+                Complaint.id == complaint_id).with_for_update().execution_options(populate_existing=True))
             if complaint is None or complaint.station_id != officer.station_id:
                 raise HTTPException(404, 'Complaint not found')
+            existing = self.db.scalar(select(Docket).where(Docket.complaint_id == complaint.id))
+            if existing is not None:
+                self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id, action='docket.ensure_existing',
+                    entity_type='docket', entity_id=existing.id, station_id=officer.station_id))
+                result = DocketOut.model_validate(existing)
+                self.db.commit()
+                return result
             if complaint.status != 'ACCEPTED':
                 raise HTTPException(409, f'Docket cannot be created from status {complaint.status}')
-            existing = self.db.scalar(select(Docket.id).where(Docket.complaint_id == complaint.id))
-            if existing is not None:
-                raise HTTPException(409, 'A docket already exists for this complaint')
             decision = self.db.scalar(select(ComplaintDecision).where(
                 ComplaintDecision.complaint_id == complaint.id,
                 ComplaintDecision.decision == 'ACCEPTED').order_by(
                     ComplaintDecision.decision_sequence.desc()).limit(1))
             if decision is None:
                 raise HTTPException(409, 'Accepted complaint decision not found')
-            station = self.db.scalar(select(Station).where(
-                Station.id == complaint.station_id, Station.is_active.is_(True)).with_for_update(read=True))
-            if station is None:
-                raise HTTPException(409, 'Complaint station is inactive')
-            now = utcnow()
-            docket = Docket(
-                complaint_id=complaint.id, cas_number=allocate_cas_number(self.db, station, now),
-                status='PENDING_APPROVAL', created_from_decision_id=decision.id,
-                opened_by_officer_id=officer.id, opened_at=now,
-            )
-            self.db.add(docket)
-            self.db.flush()
-            self.db.add(DocketStatusHistory(
-                docket_id=docket.id, from_status=None, to_status='PENDING_APPROVAL',
-                changed_by_user_id=user_id, change_reason='Docket created from accepted complaint',
-                changed_at=now,
-            ))
-            complaint.status = 'DOCKET_CREATED'
-            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
-                                action='docket.create', entity_type='docket',
-                                entity_id=docket.id, station_id=officer.station_id))
+            docket = self.create_from_acceptance(user_id, officer, complaint, decision)
             result = DocketOut.model_validate(docket)
-            notify_complainant(self.db, complaint, 'docket.created', docket_id=docket.id, actor_user_id=user_id)
             self.db.commit()
             return result
         except SQLAlchemyError:
@@ -99,6 +82,32 @@ class DocketService:
         except Exception:
             self.db.rollback()
             raise
+
+    def create_from_acceptance(self, user_id, officer, complaint, decision):
+        """Caller holds the complaint lock and owns the transaction; never commits."""
+        station = self.db.scalar(select(Station).where(
+            Station.id == complaint.station_id, Station.is_active.is_(True)).with_for_update(read=True))
+        if station is None:
+            raise HTTPException(409, 'Complaint station is inactive')
+        now = utcnow()
+        docket = Docket(
+            complaint_id=complaint.id, cas_number=allocate_cas_number(self.db, station, now),
+            status='PENDING_APPROVAL', created_from_decision_id=decision.id,
+            opened_by_officer_id=officer.id, opened_at=now,
+        )
+        self.db.add(docket)
+        self.db.flush()
+        self.db.add(DocketStatusHistory(
+            docket_id=docket.id, from_status=None, to_status='PENDING_APPROVAL',
+            changed_by_user_id=user_id, change_reason='Docket created from accepted complaint',
+            changed_at=now,
+        ))
+        complaint.status = 'DOCKET_CREATED'
+        self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                            action='docket.create', entity_type='docket',
+                            entity_id=docket.id, station_id=officer.station_id))
+        notify_complainant(self.db, complaint, 'docket.created', docket_id=docket.id, actor_user_id=user_id)
+        return docket
 
     def get_for_commander(self, user_id: uuid.UUID, docket_id: uuid.UUID) -> DocketOut:
         try:
@@ -124,11 +133,13 @@ class DocketService:
                 data: DocketApprovalRequest) -> DocketApprovalOut:
         try:
             officer = self._active_officer_with_role(user_id, 'STATION_COMMANDER')
-            docket = self.db.scalar(select(Docket).join(
-                Complaint, Complaint.id == Docket.complaint_id).where(
-                    Docket.id == docket_id, Complaint.station_id == officer.station_id).with_for_update())
-            if docket is None:
+            complaint_id = self.db.scalar(select(Docket.complaint_id).where(Docket.id == docket_id))
+            complaint = self.db.scalar(select(Complaint).where(Complaint.id == complaint_id,
+                Complaint.station_id == officer.station_id).with_for_update())
+            if complaint is None:
                 raise HTTPException(404, 'Docket not found')
+            docket = self.db.scalar(select(Docket).where(Docket.id == docket_id)
+                .with_for_update().execution_options(populate_existing=True))
             if docket.status != 'PENDING_APPROVAL':
                 raise HTTPException(409, f'Docket cannot be reviewed from status {docket.status}')
 
@@ -170,8 +181,8 @@ class DocketService:
             UserRole.user_id == user_id, Role.code == role_code))
         if role is None:
             raise HTTPException(403, f'{role_code.replace("_", " ").title()} role required')
-        officer = self.db.scalar(select(Officer).where(
-            Officer.user_id == user_id, Officer.is_active.is_(True)))
+        officer = self.db.scalar(select(Officer).join(Station, Station.id == Officer.station_id).where(
+            Officer.user_id == user_id, Officer.is_active.is_(True), Station.is_active.is_(True)))
         if officer is None:
             raise HTTPException(403, 'Active officer profile required')
         return officer

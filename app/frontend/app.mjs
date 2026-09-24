@@ -74,6 +74,10 @@ async function mine(offset = 0) {
   page('My complaints'); text('Loading complaints…');
   const data = await api.request(`/complaints/mine?limit=10&offset=${offset}`);
   page('My complaints');
+  form([['reference_number','Track one of your complaint references',{maxlength:100}]], 'Track reference', async data=>{
+    const item=await post('/complaints/track-by-reference',{reference_number:data.reference_number.trim()});
+    await detail(item.id);
+  });
   if (!data.items.length) text('No complaints to show. Submit a new complaint to get started.');
   for (const item of data.items) {
     const card = document.createElement('article'); card.className = 'card'; view.append(card);
@@ -90,7 +94,7 @@ async function detail(id) {
   page('Complaint details'); text('Loading complaint…');
   const item = await api.request(`/complaints/${encodeURIComponent(id)}/tracking`);
   page('Complaint details'); const list = document.createElement('dl'); view.append(list);
-  for (const [label, value] of [['Reference',item.reference_number],['Status',item.status.replaceAll('_',' ')],['Submitted',date(item.submitted_at)],['Review started',date(item.review_started_at)],['Last updated',date(item.updated_at)]]) { text(label,'dt',list); text(value,'dd',list); }
+  for (const [label, value] of [['Reference',item.reference_number],['CAS number',item.cas_number || 'Not allocated'],['Status',item.status.replaceAll('_',' ')],['Submitted',date(item.submitted_at)],['Review started',date(item.review_started_at)],['Last updated',date(item.updated_at)]]) { text(label,'dt',list); text(value,'dd',list); }
   button('Refresh status', () => detail(id)); button('Back to my complaints', () => mine());
 }
 function date(value) { return value ? new Date(value).toLocaleString() : 'Not started'; }
@@ -100,7 +104,7 @@ async function newComplaint() {
   page('Submit a complaint');
   if (!stations.length) { text('No receiving stations are available. Please try again later.'); return; }
   form([['station_id','Receiving station',{tag:'select',choices:[['','Select a station'],...stations.map(s => [s.id,`${s.name} · ${s.province}`])]}],
-    ['crime_category','Crime category',{maxlength:150}],['incident_description','What happened?',{tag:'textarea',maxlength:20000}],
+    ['crime_category','Crime category',{maxlength:150}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
     ['incident_location','Incident location',{maxlength:255}],['incident_city','City (optional)',{optional:true,maxlength:150}],
     ['incident_province','Province',{maxlength:100}],['incident_occurred_at','Incident date and time (optional)',{type:'datetime-local',optional:true,hint:'Enter the time in your device’s local timezone.'}]], 'Submit complaint', async (data, node) => {
       for (const key of Object.keys(data)) data[key] = data[key].trim();
@@ -116,5 +120,5 @@ document.querySelector('#login-tab').onclick = () => run(async () => login());
 document.querySelector('#register-tab').onclick = () => run(async () => register());
 document.querySelector('#mine-tab').onclick = () => run(() => mine());
 document.querySelector('#new-tab').onclick = () => run(newComplaint);
-document.querySelector('#logout').onclick = () => run(async () => { await api.logout(); session(false); login(); note('You have signed out.'); });
+document.querySelector('#logout').onclick = () => run(async () => { try { await api.logout(); note('You have signed out.'); } finally { session(false); login(); } });
 session(false); login();

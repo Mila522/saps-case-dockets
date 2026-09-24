@@ -9,6 +9,7 @@ from app.modules.access.models import User
 from app.modules.authentication.dependencies import require_permission
 from app.modules.evidence.schemas import EvidenceRequest, EvidenceOut, CustodyRequest, CustodyOut, FileOut
 from app.modules.evidence.service import EvidenceService
+from app.modules.evidence.schemas import CustodianOut
 
 from app.modules.investigations.schemas import ERROR_RESPONSES
 
@@ -41,6 +42,14 @@ def list_items(docket_id: uuid.UUID, limit: int = Query(50, ge=1, le=100), offse
 def get_item(evidence_id: uuid.UUID,
              user: User = Depends(require_permission('evidence.manage')), svc=Depends(service)):
     return svc.get_item(user.id, evidence_id)
+
+
+@router.get('/evidence/{evidence_id}/custodians', response_model=list[CustodianOut],
+             summary='List eligible same-station custodians',
+             description='Active investigator candidates only; requires assignment to the evidence docket. Audited read.')
+def custodians(evidence_id: uuid.UUID, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+               user: User = Depends(require_permission('evidence.manage')), svc=Depends(service)):
+    return svc.custodians(user.id, evidence_id, limit, offset)
 
 
 @router.post('/evidence/{evidence_id}/custody-events', response_model=CustodyOut, status_code=201,

@@ -9,13 +9,21 @@ records are written in the same transaction.
 - `GET /api/v1/refusal-reasons` (`complaint.decide`) returns active controlled reasons.
 - `POST /api/v1/complaints/{complaint_id}/decisions` (`complaint.decide`) accepts or
   refuses a station-scoped complaint. The caller must be an active charge officer.
-- `POST /api/v1/complaints/{complaint_id}/dockets` (`complaint.decide`) creates one
-  docket from an accepted decision at the officer's station.
+- `POST /api/v1/complaints/{complaint_id}/review` has one authoritative route and
+  service (`StationComplaintService`), response (`StationComplaintOut`) and audit
+  action (`complaint.review.start`).
+- `POST /api/v1/complaints/{complaint_id}/dockets` (`complaint.decide`) is deprecated
+  compatibility support: return the existing docket with 200, or create one for a
+  legacy accepted complaint that has no docket. Repeats never allocate another CAS.
 
-An accepted decision leaves the complaint in `ACCEPTED`. Docket creation separately
-allocates `CAS-{STATION_CODE}-{YYYY}-{NNNNNN}` from the shared `identifier_counters`,
-creates the initial `PENDING_APPROVAL` status-history row, and changes the complaint
-to `DOCKET_CREATED` atomically.
+Accepting a complaint records the charge officer's determination that it is a criminal
+matter and creates its docket in that same transaction. It allocates
+`CAS-{STATION_CODE}-{YYYY}-{NNNNNN}` from the shared counter, records the initial
+`PENDING_APPROVAL` history, both audits and existing D notification hooks, and moves
+the complaint to `DOCKET_CREATED`. The 201 decision response includes `docket_id`,
+`cas_number` and `docket_status`. A locked complaint and atomic counter upsert prevent
+duplicate decisions/dockets/CAS numbers under concurrent acceptance or compatibility
+requests. Every failure rolls back the decision, counter, docket, history and hooks.
 
 A compliant reason with `requires_escalation` creates a station-commander escalation.
 A non-compliant reason creates both station-commander and NCC escalations. Required

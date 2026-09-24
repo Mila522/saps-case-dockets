@@ -31,6 +31,14 @@
 
 * { box-sizing: border-box; }
 html { min-width: 720px; background: var(--grey-50); }
+html.investigator-signin { min-width: 0; }
+@media (max-width: 600px) {
+  .investigator-signin .auth-brand { padding: 28px; min-height: 180px; }
+  .investigator-signin .auth-brand h1 { font-size: 2rem; }
+  .investigator-signin .auth-panel { padding: 20px; min-width: 0; }
+  .investigator-signin .auth-card { padding: 24px; width: 100%; min-width: 0; }
+  .investigator-signin .auth-shell { grid-template-columns: minmax(0, 1fr); }
+}
 body { margin: 0; color: var(--ink); background: var(--grey-50); line-height: 1.5; }
 button, input, select, textarea { font: inherit; }
 button, select { cursor: pointer; }

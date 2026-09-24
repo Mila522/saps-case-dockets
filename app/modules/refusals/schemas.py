@@ -45,6 +45,9 @@ class ComplaintDecisionOut(BaseModel):
     decision_sequence: int
     decided_at: datetime
     complaint_status: str
+    docket_id: uuid.UUID | None = None
+    cas_number: str | None = None
+    docket_status: str | None = None
 
 
 class RefusalEscalationOut(BaseModel):

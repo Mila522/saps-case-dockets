@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assigned dockets · Investigator workspace</title>
+  <link rel="stylesheet" href="/officer/assets/styles.css">
+  <link rel="stylesheet" href="/investigator/assets/investigator.css">
+  <script type="module" src="/investigator/assets/app.mjs"></script>
+</head>
+<body class="investigator">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="workspace-header">
+    <a class="wordmark" href="/investigator/">CASE DESK <span>Investigator workspace</span></a>
+    <div class="account"><span id="identity">Authorised personnel</span><button id="logout" class="button button-secondary" hidden>Sign out</button></div>
+  </header>
+  <div class="workspace-layout">
+    <aside class="workspace-sidebar">
+      <p class="eyebrow">Casework</p>
+      <a class="workspace-link" href="/investigator/" aria-current="page">Assigned dockets <span aria-hidden="true">↗</span></a>
+      <p class="sidebar-copy">Your assignments.<br>A complete record.</p>
+      <p class="sidebar-note">Investigation notes, evidence and custody history are recorded permanently.</p>
+      <div class="prototype">PROTOTYPE<br><span>Not an official SAPS product.</span></div>
+    </aside>
+    <main id="main-content" tabindex="-1">
+      <div id="notice" class="notice" role="status" aria-live="polite" tabindex="-1" hidden></div>
+      <div id="view" aria-busy="true"><h1>Investigator workspace</h1><p>Loading your workspace…</p></div>
+      <noscript>Enable JavaScript to sign in and use the investigator workspace.</noscript>
+      <footer>Case-docket management prototype · Access is checked for every request.</footer>
+    </main>
+  </div>
+  <dialog id="confirmation" aria-labelledby="confirmation-title" aria-describedby="confirmation-copy">
+    <h2 id="confirmation-title">Confirm action</h2><p id="confirmation-copy"></p>
+    <form method="dialog" class="actions"><button class="button button-secondary" value="cancel" autofocus>Cancel</button><button class="button button-primary" value="confirm">Confirm</button></form>
+  </dialog>
+</body>
+</html>

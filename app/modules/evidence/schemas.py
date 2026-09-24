@@ -95,3 +95,9 @@ class FileOut(BaseModel):
     sha256_hash: str
     uploaded_by_user_id: uuid.UUID
     uploaded_at: datetime
+
+
+class CustodianOut(BaseModel):
+    id: uuid.UUID
+    username: str
+    rank: str

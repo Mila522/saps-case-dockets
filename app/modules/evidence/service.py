@@ -10,9 +10,23 @@ from app.modules.evidence.storage import EvidenceStorage
 from app.modules.investigations.service import InvestigationService, transactional
 from app.modules.stations.models import Officer, Station
 from app.modules.system.service import allocate_evidence_reference
+from app.modules.access.models import User, UserRole, Role
+from app.modules.evidence.schemas import CustodianOut
 
 
 class EvidenceService(InvestigationService):
+    @transactional
+    def custodians(self, user_id, evidence_id, limit, offset):
+        officer, _, item = self.item_scope(user_id, evidence_id)
+        rows = self.db.execute(select(Officer.id, User.username, Officer.rank).join(User,
+            User.id == Officer.user_id).join(UserRole, UserRole.user_id == User.id).join(Role).where(
+                Officer.station_id == officer.station_id, Officer.is_active.is_(True),
+                User.is_active.is_(True), Role.code == 'INVESTIGATING_OFFICER')
+            .order_by(User.username, Officer.id).limit(limit).offset(offset))
+        result = [CustodianOut(id=row.id, username=row.username, rank=row.rank) for row in rows]
+        self.audit(user_id, officer.station_id, 'evidence.custodians.view', 'evidence_item', item.id)
+        return result
+
     def custody_version(self, item):
         return self.db.scalar(select(EvidenceCustodyEvent.id).where(
             EvidenceCustodyEvent.evidence_item_id == item.id,
@@ -36,6 +50,10 @@ class EvidenceService(InvestigationService):
     @transactional
     def register(self, user_id, docket_id, data):
         officer, docket = self.scope(user_id, docket_id, writable=True)
+        return self._register_record(user_id, officer, docket, data)
+
+    def _register_record(self, user_id, officer, docket, data):
+        """Authorised caller owns scope, locking and commit; shared by initial intake."""
         station = self.db.get(Station, officer.station_id)
         row = EvidenceItem(docket_id=docket.id,
             evidence_reference=allocate_evidence_reference(self.db, station, utcnow()),

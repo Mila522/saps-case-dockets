@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
 from app.modules.complaints.models import Complaint
-from app.modules.complaints.schemas import ComplaintTracking
+from app.modules.dockets.service import DocketService
 from app.modules.refusals.models import ComplaintDecision, RefusalEscalation, RefusalReason
 from app.modules.refusals.schemas import (ComplaintDecisionOut, ComplaintDecisionRequest,
                                           EscalationResolutionRequest, RefusalEscalationOut,
@@ -25,42 +25,10 @@ class ComplaintDecisionService:
     def __init__(self, db: Session):
         self.db = db
 
-    def start_review(self, user_id: uuid.UUID, complaint_id: uuid.UUID) -> ComplaintTracking:
-        """Explicit review step needed by the A-to-B-to-C workflow."""
-        try:
-            officer = self.db.scalar(select(Officer).where(
-                Officer.user_id == user_id, Officer.is_active.is_(True)))
-            role = self.db.scalar(select(Role.id).join(UserRole).where(
-                UserRole.user_id == user_id, Role.code == 'CHARGE_OFFICER'))
-            if officer is None or role is None:
-                raise HTTPException(403, 'Active charge officer required')
-            complaint = self.db.scalar(select(Complaint).where(
-                Complaint.id == complaint_id, Complaint.station_id == officer.station_id).with_for_update())
-            if complaint is None:
-                raise HTTPException(404, 'Complaint not found')
-            if complaint.status != 'SUBMITTED':
-                raise HTTPException(409, 'Only a submitted complaint can start review')
-            complaint.status = 'UNDER_REVIEW'
-            complaint.review_started_at = utcnow()
-            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
-                action='complaint.review', entity_type='complaint', entity_id=complaint.id,
-                station_id=officer.station_id))
-            self.db.flush()
-            result = ComplaintTracking.model_validate(complaint)
-            self.db.commit()
-            return result
-        except SQLAlchemyError:
-            self.db.rollback()
-            raise HTTPException(503, 'Complaint review unavailable') from None
-        except Exception:
-            self.db.rollback()
-            raise
-
     def decide(self, user_id: uuid.UUID, complaint_id: uuid.UUID,
                data: ComplaintDecisionRequest) -> ComplaintDecisionOut:
         try:
-            officer = self.db.scalar(select(Officer).where(
-                Officer.user_id == user_id, Officer.is_active.is_(True)))
+            officer = DocketService(self.db)._active_officer_with_role(user_id, 'CHARGE_OFFICER')
             if officer is None:
                 raise HTTPException(403, 'Active officer profile required')
             is_charge_officer = self.db.scalar(select(Role.id).join(UserRole).where(
@@ -70,7 +38,7 @@ class ComplaintDecisionService:
 
             # Row lock: no two officers can decide the same complaint concurrently.
             complaint = self.db.scalar(select(Complaint).where(
-                Complaint.id == complaint_id).with_for_update())
+                Complaint.id == complaint_id).with_for_update().execution_options(populate_existing=True))
             if complaint is None:
                 raise HTTPException(404, 'Complaint not found')
             if complaint.station_id != officer.station_id:
@@ -104,8 +72,11 @@ class ComplaintDecisionService:
             self.db.add(decision_row)
             self.db.flush()
 
+            docket = None
             if data.decision == 'ACCEPTED':
                 complaint.status = 'ACCEPTED'
+                self.db.flush()
+                docket = DocketService(self.db).create_from_acceptance(user_id, officer, complaint, decision_row)
             else:
                 must_escalate = reason.requires_escalation or reason.is_non_compliant
                 complaint.status = 'ESCALATED' if must_escalate else 'REFUSED'
@@ -123,6 +94,8 @@ class ComplaintDecisionService:
                 refusal_reason_id=decision_row.refusal_reason_id, officer_notes=decision_row.officer_notes,
                 decision_sequence=decision_row.decision_sequence, decided_at=decision_row.decided_at,
                 complaint_status=complaint.status,
+                docket_id=docket.id if docket else None, cas_number=docket.cas_number if docket else None,
+                docket_status=docket.status if docket else None,
             )
 
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
@@ -134,7 +107,7 @@ class ComplaintDecisionService:
         except SQLAlchemyError:
             self.db.rollback()
             raise HTTPException(503, 'Complaint decision unavailable') from None
-        except HTTPException:
+        except Exception:
             self.db.rollback()
             raise
 

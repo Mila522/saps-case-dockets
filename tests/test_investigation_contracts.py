@@ -116,7 +116,9 @@ def test_c_openapi_authentication_errors_and_documentation(workflow_context):
     schema = client.get('/openapi.json').json()
     routes = [(path, method, operation) for path, methods in schema['paths'].items()
         for method, operation in methods.items() if set(operation.get('tags', [])) & {'Investigations', 'Evidence'}]
-    assert len(routes) == 16
+    assert len(routes) == 18
+    assert ('/api/v1/investigations/dockets/{docket_id}/status-history', 'get') in {(p, m) for p, m, _ in routes}
+    assert ('/api/v1/evidence/{evidence_id}/custodians', 'get') in {(p, m) for p, m, _ in routes}
     for path, method, operation in routes:
         assert operation['summary'] and operation['description'] and operation['security']
         assert {'401', '403', '404', '409', '422'} <= set(operation['responses'])

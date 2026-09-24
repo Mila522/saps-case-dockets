@@ -57,10 +57,10 @@ def test_end_to_end_case_workflow(workflow_context, tmp_path, monkeypatch):
     decision = db.scalar(select(ComplaintDecision).where(ComplaintDecision.complaint_id == uuid.UUID(complaint)))
     assert decision.decision == 'ACCEPTED'
     opened = client.post(f'/api/v1/complaints/{complaint}/dockets', headers=charge)
-    assert opened.status_code == 201
+    assert opened.status_code == 200
     docket = opened.json()['id']
     assert re.fullmatch(rf'CAS-{station.station_code}-\d{{4}}-\d{{6,}}', opened.json()['cas_number'])
-    assert client.post(f'/api/v1/complaints/{complaint}/dockets', headers=charge).status_code == 409
+    assert client.post(f'/api/v1/complaints/{complaint}/dockets', headers=charge).status_code == 200
     assert client.get(f'/api/v1/dockets/{docket}', headers=foreign_commander).status_code == 404
     assert client.post(f'/api/v1/dockets/{docket}/approvals', headers=commander,
         json={'decision': 'APPROVED'}).status_code == 201
@@ -72,15 +72,15 @@ def test_end_to_end_case_workflow(workflow_context, tmp_path, monkeypatch):
         json={'content': 'PRIVATE-NOTE-CONTENT', 'is_sensitive': True, 'note_type': 'INTERVIEW'})
     assert note.status_code == 201
     assert client.get(f'/api/v1/dockets/{docket}/notes', headers=complainant).status_code == 403
-    status_data = {'status': 'ON_HOLD', 'expected_status': 'ACTIVE', 'reason': 'Await analysis'}
-    assert client.post(f'/api/v1/dockets/{docket}/status', headers=unassigned, json=status_data).status_code == 404
-    assert client.post(f'/api/v1/dockets/{docket}/status', headers=investigator, json=status_data).status_code == 200
     evidence_data = {'title': 'Recording', 'description': 'PRIVATE-EVIDENCE-CONTENT',
         'evidence_type': 'VIDEO', 'is_digital': True, 'storage_location': 'Locker A'}
     assert client.post(f'/api/v1/dockets/{docket}/evidence', headers=unassigned, json=evidence_data).status_code == 404
     registered = client.post(f'/api/v1/dockets/{docket}/evidence', headers=investigator, json=evidence_data)
     assert registered.status_code == 201
     item = registered.json()['id']
+    status_data = {'status': 'ON_HOLD', 'expected_status': 'ACTIVE', 'reason': 'Await analysis'}
+    assert client.post(f'/api/v1/dockets/{docket}/status', headers=unassigned, json=status_data).status_code == 404
+    assert client.post(f'/api/v1/dockets/{docket}/status', headers=investigator, json=status_data).status_code == 200
     assert re.fullmatch(rf'EVD-{station.station_code}-\d{{4}}-000001', registered.json()['evidence_reference'])
     initial = client.get(f'/api/v1/evidence/{item}/custody-events', headers=investigator).json()[0]
     assert initial['id'] == registered.json()['custody_version']

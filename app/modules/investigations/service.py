@@ -12,7 +12,7 @@ from app.modules.complaints.models import Complaint
 from app.modules.dockets.models import Docket
 from app.modules.dockets.schemas import DocketOut
 from app.modules.investigations.models import CaseAssignment, DocketStatusHistory, InvestigationNote
-from app.modules.investigations.schemas import AssignmentOut, NoteOut
+from app.modules.investigations.schemas import AssignmentOut, NoteOut, InvestigatorDocketOut, StatusHistoryOut
 from app.modules.stations.models import Officer, Station
 from app.modules.communications.notifications import notify_complainant
 
@@ -82,6 +82,32 @@ class InvestigationService:
         if status == 'CLOSED':
             docket.closed_at, docket.closure_reason = utcnow(), reason
 
+    def allowed_statuses(self, user_id, status):
+        permissions = set(self.db.scalars(select(Permission.code).join(RolePermission).join(UserRole,
+            UserRole.role_id == RolePermission.role_id).where(UserRole.user_id == user_id)))
+        if 'case.update_status' not in permissions:
+            return []
+        return [value for value in self.status_transitions.get(status, ())
+                if value != 'CLOSED' or 'case.close' in permissions]
+
+    status_transitions = {'ACTIVE': ('ON_HOLD', 'CLOSED'), 'ON_HOLD': ('ACTIVE', 'CLOSED')}
+
+    def docket_out(self, docket, user_id, *, detail=False):
+        complaint = self.db.get(Complaint, docket.complaint_id)
+        station = self.db.get(Station, complaint.station_id)
+        assignment = self.db.scalar(select(CaseAssignment).where(
+            CaseAssignment.docket_id == docket.id, CaseAssignment.unassigned_at.is_(None)))
+        if assignment is None:
+            raise HTTPException(404, 'Docket not found')
+        return InvestigatorDocketOut(**DocketOut.model_validate(docket).model_dump(),
+            allowed_next_statuses=self.allowed_statuses(user_id, docket.status),
+            complaint_reference=complaint.reference_number, crime_category=complaint.crime_category,
+            station_id=station.id, station_name=station.name, assigned_at=assignment.assigned_at,
+            investigating_officer_id=assignment.investigating_officer_id, updated_at=docket.updated_at,
+            incident_description=complaint.incident_description if detail else None,
+            incident_occurred_at=complaint.incident_occurred_at if detail else None,
+            incident_location=complaint.incident_location if detail else None)
+
     @transactional
     def assign(self, user_id, docket_id, data):
         commander, docket = self.scope(user_id, docket_id, commander=True, writable=True)
@@ -136,7 +162,7 @@ class InvestigationService:
             CaseAssignment.investigating_officer_id == officer.id,
             CaseAssignment.unassigned_at.is_(None)).order_by(Docket.opened_at, Docket.id)
             .limit(limit).offset(offset))
-        result = [DocketOut.model_validate(row) for row in rows]
+        result = [self.docket_out(row, user_id) for row in rows]
         self.audit(user_id, officer.station_id, 'docket.list_assigned', 'docket')
         return result
 
@@ -144,7 +170,16 @@ class InvestigationService:
     def get(self, user_id, docket_id):
         officer, docket = self.scope(user_id, docket_id)
         self.audit(user_id, officer.station_id, 'docket.view_assigned', 'docket', docket.id)
-        return DocketOut.model_validate(docket)
+        return self.docket_out(docket, user_id, detail=True)
+
+    @transactional
+    def status_history(self, user_id, docket_id, limit, offset):
+        officer, docket = self.scope(user_id, docket_id)
+        rows = self.db.scalars(select(DocketStatusHistory).where(DocketStatusHistory.docket_id == docket.id)
+            .order_by(DocketStatusHistory.changed_at, DocketStatusHistory.id).limit(limit).offset(offset))
+        result = [StatusHistoryOut.model_validate(row) for row in rows]
+        self.audit(user_id, officer.station_id, 'case.status_history.view', 'docket', docket.id)
+        return result
 
     @transactional
     def add_note(self, user_id, docket_id, data):
@@ -176,8 +211,7 @@ class InvestigationService:
                     UserRole.user_id == user_id, Permission.code == 'case.close'))
             if allowed is None:
                 raise HTTPException(403, 'Case closure permission required')
-        transitions = {'ACTIVE': {'ON_HOLD', 'CLOSED'}, 'ON_HOLD': {'ACTIVE', 'CLOSED'}}
-        if data.status not in transitions.get(docket.status, set()):
+        if data.status not in self.status_transitions.get(docket.status, ()):
             raise HTTPException(409, 'Invalid investigation status transition')
         self.transition(docket, user_id, data.status, data.reason)
         self.audit(user_id, officer.station_id, 'case.update_status', 'docket', docket.id)

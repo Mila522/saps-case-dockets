@@ -9,6 +9,7 @@ from app.modules.authentication.dependencies import require_permission
 from app.modules.dockets.schemas import DocketOut
 from app.modules.investigations.schemas import AssignmentRequest, AssignmentOut, ReasonRequest, NoteRequest, NoteOut, StatusRequest
 from app.modules.investigations.service import InvestigationService
+from app.modules.investigations.schemas import InvestigatorDocketOut, StatusHistoryOut
 
 from app.modules.investigations.schemas import ERROR_RESPONSES
 
@@ -43,7 +44,7 @@ def assignments(docket_id: uuid.UUID, limit: int = Query(50, ge=1, le=100), offs
     return svc.assignments(user.id, docket_id, limit, offset)
 
 
-@router.get('/investigations/dockets', response_model=list[DocketOut],
+@router.get('/investigations/dockets', response_model=list[InvestigatorDocketOut],
              summary='List actively assigned dockets',
              description='Active investigating officers see only their current station assignments. No implicit national access.')
 def mine(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
@@ -51,11 +52,19 @@ def mine(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
     return svc.mine(user.id, limit, offset)
 
 
-@router.get('/investigations/dockets/{docket_id}', response_model=DocketOut,
+@router.get('/investigations/dockets/{docket_id}', response_model=InvestigatorDocketOut,
              summary='Read an assigned docket',
              description='Checks current assignment and station on every request. Sensitive read is audited.')
 def docket(docket_id: uuid.UUID, user: User = Depends(require_permission('docket.view_assigned')), svc=Depends(service)):
     return svc.get(user.id, docket_id)
+
+
+@router.get('/investigations/dockets/{docket_id}/status-history', response_model=list[StatusHistoryOut],
+             summary='Read assigned docket status history',
+             description='Paginated immutable history, restricted to the active assigned investigator and audited.')
+def status_history(docket_id: uuid.UUID, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
+                   user: User = Depends(require_permission('docket.view_assigned')), svc=Depends(service)):
+    return svc.status_history(user.id, docket_id, limit, offset)
 
 
 @router.post('/dockets/{docket_id}/notes', response_model=NoteOut, status_code=201,

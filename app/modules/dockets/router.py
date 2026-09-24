@@ -26,7 +26,9 @@ def list_station_dockets(
     return service.list_for_commander(user.id, status, limit=limit, offset=offset)
 
 
-@router.post('/complaints/{complaint_id}/dockets', response_model=DocketOut, status_code=201)
+@router.post('/complaints/{complaint_id}/dockets', response_model=DocketOut, deprecated=True,
+             summary='Ensure a docket exists for a previously accepted complaint',
+             description='Compatibility endpoint: returns the existing docket with 200; allocates only for legacy accepted complaints without a docket. New acceptance creates a docket atomically.')
 def open_docket(
         complaint_id: uuid.UUID,
         user: User = Depends(require_permission('complaint.decide')),

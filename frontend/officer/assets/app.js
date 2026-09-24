@@ -1,4 +1,11 @@
+import {mountWalkIn, mountMaterials} from '/portal/case-materials.mjs';
 const API = '/api/v1';
+const dossierRequest=(path,options={})=>request(path,{...options,...(options.body?{body:JSON.stringify(options.body)}:{})});
+if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
+  document.documentElement.classList.add('investigator-signin');
+  document.title = 'Investigator sign-in · Case Desk prototype';
+  document.querySelector('.security-note').textContent = 'Prototype · Not an official SAPS product · MFA required';
+}
 
 const state = {
   accessToken: sessionStorage.getItem('saps_access_token'),
@@ -138,6 +145,18 @@ async function enterApplication() {
   state.user = await request('/auth/me');
   const roles = state.user.roles.map(role => role.code);
   const permissions = new Set(state.user.permissions.map(permission => permission.code));
+  $('#intake-open').hidden = !roles.includes('CHARGE_OFFICER') || !permissions.has('complaint.register');
+  // Reuse this login/MFA flow for C; the destination is fixed, never a supplied URL.
+  if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
+    if (roles.includes('INVESTIGATING_OFFICER') && permissions.has('docket.view_assigned')) {
+      location.replace('/investigator/');
+      return;
+    }
+    clearSession();
+    showAuth();
+    showMessage($('#auth-message'), 'An investigating officer account is required for this workspace.');
+    return;
+  }
   const allowedRole = roles.some(role => ['CHARGE_OFFICER', 'STATION_COMMANDER', 'NCC_OFFICER'].includes(role));
   if (!allowedRole) {
     clearSession();
@@ -253,7 +272,7 @@ function renderComplaints() {
   const counts = Object.fromEntries(['SUBMITTED', 'UNDER_REVIEW', 'ACCEPTED', 'ESCALATED'].map(status => [status, state.complaints.filter(row => row.status === status).length]));
   $('#metric-submitted').textContent = counts.SUBMITTED;
   $('#metric-review').textContent = counts.UNDER_REVIEW;
-  $('#metric-accepted').textContent = counts.ACCEPTED;
+  $('#metric-accepted').textContent = counts.ACCEPTED + state.complaints.filter(row=>row.status==='DOCKET_CREATED').length;
   $('#metric-escalated').textContent = counts.ESCALATED;
   $('#complaint-empty').hidden = rows.length !== 0;
   $('#complaint-table').innerHTML = rows.map(row => {
@@ -269,7 +288,7 @@ function renderComplaints() {
       <td>${escapeHtml(row.crime_category)}<span class="subtext">${escapeHtml(row.incident_city || row.incident_province)}</span></td>
       <td>${escapeHtml(formatDate(row.submitted_at))}</td>
       <td>${statusBadge(row.status)}</td>
-      <td><div class="actions">${action}</div></td>
+      <td><div class="actions">${action}<button class="button button-secondary button-small" data-complaint-action="materials" data-id="${row.id}">Statements and witnesses</button></div></td>
     </tr>`;
   }).join('');
 }
@@ -286,6 +305,7 @@ async function loadReasons() {
 
 function complaintSummary(row) {
   return `<div class="summary-item"><span>Reference</span><strong>${escapeHtml(row.reference_number)}</strong></div>
+    <div class="summary-item"><span>CAS number</span><strong>${escapeHtml(row.cas_number || 'Not allocated')}</strong></div>
     <div class="summary-item"><span>Status</span><strong>${escapeHtml(label(row.status))}</strong></div>
     <div class="summary-item"><span>Category</span><strong>${escapeHtml(row.crime_category)}</strong></div>
     <div class="summary-item"><span>Incident date</span><strong>${escapeHtml(formatDate(row.incident_occurred_at))}</strong></div>
@@ -319,10 +339,13 @@ async function complaintAction(button) {
       openComplaintDialog(row);
     } else if (button.dataset.complaintAction === 'view') {
       openComplaintDialog(row, true);
+    } else if (button.dataset.complaintAction === 'materials') {
+      $('#materials-dialog').showModal();
+      await mountMaterials($('#materials-content'),row.id,dossierRequest,{initialEvidence:Boolean(row.docket_id)});
     } else if (button.dataset.complaintAction === 'docket') {
-      if (!window.confirm(`Create a docket for ${row.reference_number}?`)) return;
+      if (!window.confirm(`Ensure the legacy accepted complaint ${row.reference_number} has a docket?`)) return;
       const docket = await request(`/complaints/${row.id}/dockets`, { method: 'POST' });
-      globalMessage(`Docket ${docket.cas_number} created successfully.`, true);
+      globalMessage(`Docket ${docket.cas_number} is available.`, true);
       await loadComplaints();
     }
   } catch (error) {
@@ -356,6 +379,7 @@ async function submitDecision(event) {
     payload.officer_notes = $('#officer-notes').value.trim() || null;
   }
   const button = $('#complaint-submit');
+  if (button.disabled) return;
   button.disabled = true;
   clearMessage($('#complaint-dialog-message'));
   try {
@@ -363,7 +387,7 @@ async function submitDecision(event) {
       method: 'POST', body: JSON.stringify(payload),
     });
     $('#complaint-dialog').close();
-    globalMessage(`Decision recorded. Complaint is now ${label(result.complaint_status)}.`, true);
+    globalMessage(result.cas_number ? `Accepted. Docket ${result.cas_number} created and awaiting commander approval.` : `Decision recorded. Complaint is now ${label(result.complaint_status)}.`, true);
     await loadComplaints();
   } catch (error) {
     showMessage($('#complaint-dialog-message'), error.message);
@@ -462,7 +486,7 @@ function renderDockets() {
       : row.status === 'APPROVED'
         ? `<button class="button button-gold button-small" data-docket-action="assign" data-id="${row.id}">Assign investigator</button>`
         : `<button class="button button-secondary button-small" data-docket-action="view" data-id="${row.id}">View</button>`;
-    return `<tr><td><span class="reference">${escapeHtml(row.cas_number)}</span></td><td><span class="reference">${escapeHtml(row.complaint_id)}</span></td><td>${escapeHtml(formatDate(row.opened_at))}</td><td>${statusBadge(row.status)}</td><td><div class="actions">${actions}</div></td></tr>`;
+    return `<tr><td><span class="reference">${escapeHtml(row.cas_number)}</span></td><td><span class="reference">${escapeHtml(row.complaint_id)}</span></td><td>${escapeHtml(formatDate(row.opened_at))}</td><td>${statusBadge(row.status)}</td><td><div class="actions">${actions}<button class="button button-secondary button-small" data-docket-action="materials" data-id="${row.id}">Statements and witnesses</button></div></td></tr>`;
   }).join('');
 }
 
@@ -470,10 +494,15 @@ function docketSummary(row) {
   return `<div class="summary-item"><span>CAS number</span><strong>${escapeHtml(row.cas_number)}</strong></div><div class="summary-item"><span>Status</span><strong>${escapeHtml(label(row.status))}</strong></div><div class="summary-item summary-item-wide"><span>Complaint</span><strong>${escapeHtml(row.complaint_id)}</strong></div><div class="summary-item"><span>Opened</span><strong>${escapeHtml(formatDate(row.opened_at))}</strong></div>`;
 }
 
-function docketAction(button) {
+async function docketAction(button) {
   const row = state.dockets.find(item => item.id === button.dataset.id);
   if (!row) return;
   state.activeDocket = row;
+  if (button.dataset.docketAction === 'materials') {
+    $('#materials-dialog').showModal();
+    await mountMaterials($('#materials-content'),row.complaint_id,dossierRequest);
+    return;
+  }
   if (button.dataset.docketAction === 'assign') {
     $('#assignment-form').reset();
     $('#assignment-summary').innerHTML = docketSummary(row);
@@ -550,6 +579,14 @@ async function submitAssignment(event) {
 }
 
 function bindEvents() {
+  $('#intake-open').onclick=()=>{
+    mountWalkIn($('#intake-content'),dossierRequest,async row=>{
+      $('#intake-dialog').close();
+      await loadComplaints();
+      globalMessage(`In-station complaint registered: ${row.reference_number}`,true);
+    });
+    $('#intake-dialog').showModal();
+  };
   $('#login-form').addEventListener('submit', handleLogin);
   $('#mfa-form').addEventListener('submit', event => handleMfa(event, false));
   $('#setup-form').addEventListener('submit', event => handleMfa(event, true));

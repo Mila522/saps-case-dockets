@@ -84,10 +84,11 @@ def test_acceptance_creates_numbered_docket_history_and_audits(workflow_context)
                            json={'decision': 'ACCEPTED'}, headers=headers)
     assert response.status_code == 201
     body = response.json()
-    assert body['complaint_status'] == 'ACCEPTED'
-    assert db.scalar(select(Docket.id).where(Docket.complaint_id == row.id)) is None
+    assert body['complaint_status'] == 'DOCKET_CREATED'
+    assert body['docket_id'] and body['cas_number']
+    assert str(db.scalar(select(Docket.id).where(Docket.complaint_id == row.id))) == body['docket_id']
     opened = client.post(f'/api/v1/complaints/{row.id}/dockets', headers=headers)
-    assert opened.status_code == 201
+    assert opened.status_code == 200
     assert opened.json()['cas_number'].endswith('-000001')
     docket = db.get(Docket, uuid.UUID(opened.json()['id']))
     assert docket.complaint_id == row.id and docket.opened_by_officer_id == officer.id

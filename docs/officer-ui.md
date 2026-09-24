@@ -18,13 +18,18 @@ Navigation is derived from live roles and permissions returned by `/api/v1/auth/
 - Start review of a submitted complaint.
 - Accept or refuse an under-review complaint.
 - Select active controlled refusal reasons and supply required notes.
-- Create a docket from an accepted complaint.
+- Accept a criminal complaint and receive its automatically created docket/CAS.
+- Register a new walk-in complainant and complaint at the officer's station.
+- View and append actual complainant/witness statements and initial evidence before
+  commander approval; statement corrections preserve all previous versions.
+- Recover legacy accepted complaints via the idempotent compatibility endpoint.
 
 ## Station commander
 
 - View station complaints.
 - View, acknowledge and resolve in-scope refusal escalations.
 - List station dockets and review pending dockets.
+- Read statements, witnesses and the initial evidence register for review.
 - Approve or return a docket for correction.
 - Select an active investigating officer from the same station and assign the case.
 

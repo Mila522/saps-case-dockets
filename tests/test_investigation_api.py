@@ -33,7 +33,7 @@ def investigation(workflow_context, tmp_path, monkeypatch):
     assert client.post(f'/api/v1/complaints/{complaint.id}/decisions',
         json={'decision': 'ACCEPTED'}, headers=charge).status_code == 201
     response = client.post(f'/api/v1/complaints/{complaint.id}/dockets', headers=charge)
-    assert response.status_code == 201
+    assert response.status_code == 200
     docket_id = response.json()['id']
     assert client.post(f'/api/v1/dockets/{docket_id}/approvals',
         json={'decision': 'APPROVED'}, headers=commander).status_code == 201

@@ -8,14 +8,18 @@ resulting access token as `Authorization: Bearer <access_token>`.
   nonnegative. The response includes `items`, `limit`, `offset` and `has_more`.
 - `GET /api/v1/complaints/{complaint_id}/tracking` returns one owned complaint.
   Obtain its UUID from the list response.
+- `POST /api/v1/complaints/track-by-reference` accepts `{"reference_number":"..."}`
+  under the same authentication and owner checks. Guessed or non-owned references
+  return the same 404. There is no anonymous reference lookup.
 
-Both endpoints require the existing `case.track_own` permission and a complainant
+All endpoints require the existing `case.track_own` permission and a complainant
 profile linked to the authenticated user. The client cannot choose an owner.
 Global permissions never bypass ownership. Unlinked in-station profiles need a
 separate verified account-linking workflow; these endpoints do not claim them.
 
 Each item contains `id`, `reference_number`, `status`, `station_id`, `submitted_at`,
-`review_started_at` and `updated_at`. Tracking reflects the current complaint row;
+`review_started_at`, `updated_at` and nullable `cas_number` (filled after acceptance).
+Tracking reflects the current complaint row;
 it does not invent a status history or expose statements, witnesses, evidence or
 internal investigation notes. See `complaint-registration.md` to submit a complaint.
 

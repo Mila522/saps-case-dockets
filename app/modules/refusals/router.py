@@ -10,24 +10,12 @@ from app.modules.refusals.schemas import (ComplaintDecisionOut, ComplaintDecisio
                                           EscalationResolutionRequest, RefusalEscalationOut,
                                           RefusalReasonOut)
 from app.modules.refusals.service import ComplaintDecisionService, RefusalService
-from app.modules.complaints.schemas import ComplaintTracking
 
 router = APIRouter(tags=['Refusals'])
 
 
 def get_decision_service(db: Session = Depends(get_db)) -> ComplaintDecisionService:
     return ComplaintDecisionService(db)
-
-
-@router.post('/complaints/{complaint_id}/review', response_model=ComplaintTracking,
-             summary='Start complaint review',
-             description='A charge officer at the complaint station moves SUBMITTED to UNDER_REVIEW. Audited atomically.',
-             responses={401: {'description': 'Authentication required'}, 403: {'description': 'Charge officer permission required'},
-                        404: {'description': 'Complaint missing or outside station'}, 409: {'description': 'Review already started or complaint decided'}})
-def start_review(complaint_id: uuid.UUID,
-                 user: User = Depends(require_permission('complaint.decide')),
-                 service: ComplaintDecisionService = Depends(get_decision_service)):
-    return service.start_review(user.id, complaint_id)
 
 
 @router.post('/complaints/{complaint_id}/decisions', response_model=ComplaintDecisionOut, status_code=201)

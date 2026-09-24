@@ -1,4 +1,5 @@
 from pathlib import Path
+import mimetypes
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,8 +13,13 @@ from app.db import models  # noqa: F401 -- register mappings before authenticati
 from app.api.router import router as api_router
 from app.core.config import settings
 from app.modules.evidence.middleware import EvidenceUploadLimit
+from app.frontend.investigator_routes import router as investigator_frontend, ROOT as investigator_root
 
 
+
+# Windows registry MIME mappings may label ES modules as text/plain.
+mimetypes.add_type('text/javascript', '.mjs')
+mimetypes.add_type('text/javascript', '.js')
 
 app = FastAPI(
     title="SAPS Case-Docket Management System",
@@ -21,6 +27,8 @@ app = FastAPI(
 )
 app.add_middleware(EvidenceUploadLimit)
 app.include_router(api_router)
+app.include_router(investigator_frontend)
+app.mount('/investigator/assets', StaticFiles(directory=investigator_root / 'assets'), name='investigator-assets')
 app.mount("/portal", StaticFiles(directory="app/frontend", html=True), name="portal")
 
 officer_frontend_root = Path(__file__).resolve().parents[1] / 'frontend' / 'officer'

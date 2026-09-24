@@ -14,7 +14,19 @@ including all 30 tables, RBAC grants, identifier formats, protections, review fi
 and future service rules. Revision `1edbbd1f3330` adds 38 role-permission mappings and
 station/year identifier counters. The full migration chain was verified in a newly
 created disposable database, including downgrade/replay and preservation of existing
-grants; the temporary database was then dropped. No identifier service is implemented.
+grants; the temporary database was then dropped.
+
+Complaint decisions, refusal escalation tracking, shared-counter CAS allocation,
+docket creation, and commander approval APIs are documented in
+[Decisions and dockets](docs/decisions-dockets.md). They use the existing schema and
+do not add or modify a migration.
+
+Collaborator C adds investigator assignments/reassignment, assigned-docket access,
+immutable notes, investigation status changes, evidence registration and custody,
+and protected file upload/download. See
+[Investigation and evidence APIs](docs/investigation-evidence.md) for routes,
+permissions, private storage configuration, and testing. This package reuses the
+existing schema and A/B workflows; no migration is required.
 
 ## Complaint and docket database
 

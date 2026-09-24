@@ -9,12 +9,15 @@ from app.db import models  # noqa: F401 -- register mappings before authenticati
 from app.api.router import router as api_router
 from app.core.config import settings
 from fastapi.staticfiles import StaticFiles
+from app.modules.evidence.middleware import EvidenceUploadLimit
+
 
 
 app = FastAPI(
     title="SAPS Case-Docket Management System",
     version="1.0.0",
 )
+app.add_middleware(EvidenceUploadLimit)
 app.include_router(api_router)
 app.mount("/portal", StaticFiles(directory="app/frontend", html=True), name="portal")
 
@@ -35,7 +38,9 @@ async def database_error(request: Request, exc: SQLAlchemyError):
 
 @app.middleware('http')
 async def protect_auth_responses(request: Request, call_next):
-    protected = request.url.path.startswith(('/api/v1/auth', '/api/v1/complaints'))
+    protected = request.url.path.startswith(('/api/v1/auth', '/api/v1/complaints',
+                                              '/api/v1/dockets', '/api/v1/refusal-',
+                                              '/api/v1/investigations', '/api/v1/evidence'))
     if settings.environment == 'production' and protected and request.url.scheme != 'https':
         return JSONResponse(status_code=400, content={'detail': 'HTTPS is required'}, headers={'Cache-Control': 'no-store'})
     response = await call_next(request)

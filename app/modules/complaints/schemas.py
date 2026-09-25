@@ -7,6 +7,13 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, EmailStr
 from app.modules.evidence.schemas import EvidenceOut
 
 
+class ReceivingStationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    province: str
+
+
 class ComplaintTracking(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

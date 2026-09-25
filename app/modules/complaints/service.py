@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.modules.audit.models import AuditLog
 from app.modules.complainants.models import Complainant
 from app.modules.complaints.models import Complaint, ComplaintStatement, Witness, WitnessStatement
-from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage
+from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage, ReceivingStationOut
 from app.modules.complaints.schemas import ComplaintRegistration, StationComplaintOut, StationComplaintPage
 from app.modules.access.models import Role, UserRole, User
 from app.modules.dockets.models import Docket
@@ -22,6 +22,22 @@ from app.modules.communications.notifications import notify_complainant
 class ComplaintRegistrationService:
     def __init__(self, db: Session):
         self.db = db
+
+    def receiving_stations(self, user_id: uuid.UUID) -> list[ReceivingStationOut]:
+        try:
+            rows = self.db.scalars(select(Station).where(Station.is_active.is_(True))
+                .order_by(Station.province, Station.name, Station.id)).all()
+            result = [ReceivingStationOut.model_validate(row) for row in rows]
+            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+                                action='station.list_receiving', entity_type='station'))
+            self.db.commit()
+            return result
+        except SQLAlchemyError:
+            self.db.rollback()
+            raise HTTPException(503, 'Receiving stations unavailable') from None
+        except Exception:
+            self.db.rollback()
+            raise
 
     def register(self, user_id: uuid.UUID, data: ComplaintRegistration) -> ComplaintTracking:
         try:

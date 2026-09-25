@@ -27,6 +27,26 @@ def payload(db, **changes):
                 incident_province='Test') | changes
 
 
+def test_receiving_station_directory_is_authenticated_and_active_only(auth_context):
+    client, db = auth_context
+    headers, _, _ = account(client, db)
+    active_id = uuid.UUID(payload(db)['station_id'])
+    inactive_id = uuid.UUID(payload(db)['station_id'])
+    db.get(Station, inactive_id).is_active = False
+    db.commit()
+    url = '/api/v1/complaints/receiving-stations'
+    assert client.get(url).status_code == 401
+    response = client.get(url, headers=headers)
+    assert response.status_code == 200
+    rows = {row['id']: row for row in response.json()}
+    assert str(active_id) in rows and str(inactive_id) not in rows
+    assert set(rows[str(active_id)]) == {'id', 'name', 'province'}
+    permission = db.scalar(select(Permission.id).where(Permission.code == 'complaint.submit'))
+    db.execute(delete(RolePermission).where(RolePermission.permission_id == permission))
+    db.commit()
+    assert client.get(url, headers=headers).status_code == 403
+
+
 def test_registration_owned_trackable_and_numbered(auth_context):
     client, db = auth_context
     headers, owner, _ = account(client, db)

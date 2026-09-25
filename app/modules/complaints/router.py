@@ -11,7 +11,7 @@ from app.modules.complaints.schemas import (ComplaintTracking, ComplaintTracking
                                              StationComplaintOut, StationComplaintPage)
 from app.modules.complaints.service import ComplaintTrackingService
 from app.modules.complaints.service import ComplaintRegistrationService
-from app.modules.complaints.schemas import ComplaintRegistration
+from app.modules.complaints.schemas import ComplaintRegistration, ReceivingStationOut
 from app.modules.complaints.service import StationComplaintService
 from app.modules.complaints.intake import ComplaintIntakeService
 from app.modules.complaints.schemas import (InStationRegistration, ReferenceTrackingRequest,
@@ -23,6 +23,12 @@ router = APIRouter(prefix='/complaints', tags=['Complaints'])
 
 def get_registration_service(db: Session = Depends(get_db)) -> ComplaintRegistrationService:
     return ComplaintRegistrationService(db)
+
+
+@router.get('/receiving-stations', response_model=list[ReceivingStationOut])
+def receiving_stations(user: User = Depends(require_permission('complaint.submit')),
+                      service: ComplaintRegistrationService = Depends(get_registration_service)):
+    return service.receiving_stations(user.id)
 
 
 @router.post('', response_model=ComplaintTracking, status_code=201)

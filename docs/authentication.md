@@ -1,177 +1,193 @@
 # Authentication and authorization
 
-This phase adds only `/api/v1/auth` endpoints. Complaint, docket, evidence, delivery,
-and frontend features remain outside scope. Migration `089c746ed6a9` adds
-`auth_sessions`, `user_mfa_methods`, and case-insensitive unique indexes on
-`lower(users.username)` and `lower(users.email)`. Existing exact-case indexes and
-applied migrations are preserved. The migration repeats its conflict check while
-holding a write-blocking lock on users; it never merges or deletes accounts.
+## Current flow: password plus email verification
 
-## Configuration
+Registration creates an active but **unverified, pending** account, complainant
+profile and COMPLAINANT role. No access or refresh tokens are issued yet. A random
+six-digit email code must be verified to finish signing in. Subsequent sign-ins
+require a valid password and a newly submitted email code. This applies to all
+roles, including charge officers, commanders and investigators.
 
-Copy the non-secret settings from `.env.example`, then generate independent keys
-with `secrets.token_urlsafe(48)` for JWT and `Fernet.generate_key()` for MFA encryption.
-Write generated values directly to `.env` through a local script or a secret manager;
-do not display them, commit them, or put them in shell arguments/history. This work
-populated missing local keys without printing them. Runtime startup never generates
-new keys or falls back to defaults. Losing the encryption key makes stored TOTP
-secrets unusable; key rotation needs a deliberate migration/re-encryption process.
+This is password plus email verification. It is **not phishing-resistant** and is
+not equivalent to a strong authenticator or passkey factor; email compromise can
+compromise this verification channel. It intentionally differs from the
+presentation's authenticator-MFA wording. The PDF has not been modified.
 
-| Setting | Default / requirement |
-| --- | --- |
-| ENVIRONMENT | development; test and production also supported |
-| JWT_SECRET_KEY | Required strong secret, at least 32 bytes; placeholders rejected |
-| JWT_ALGORITHM | HS256 only; never selected from the incoming token |
-| ACCESS_TOKEN_EXPIRE_MINUTES | 15, positive |
-| REFRESH_TOKEN_EXPIRE_DAYS | 7, positive, from each successful issuance/rotation |
-| MFA_ENCRYPTION_KEY | Required valid Fernet key; repetitive placeholder keys rejected |
-| MAX_FAILED_LOGIN_ATTEMPTS | 5, positive |
-| ACCOUNT_LOCK_MINUTES | 15, positive |
-| MFA_CHALLENGE_EXPIRE_MINUTES | 5, positive and at most 10 |
+## Configuration and startup
 
-Validation runs when application settings load, before startup. Secret fields use
-masked Pydantic representations. Database errors hide SQL parameter values and auth
-service errors never log request bodies or credentials. Production auth endpoints
-reject non-HTTPS requests. When terminating TLS at a proxy, configure Uvicorn to
-trust forwarded headers only from the actual proxy, never arbitrary clients.
+Keep `.env` local and untracked. Configure `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USE_STARTTLS=true`, `SMTP_USERNAME`, `SMTP_PASSWORD` (the sender's app
+password), and `EMAIL_FROM`. `.env.example` contains placeholders only. Existing
+`JWT_SECRET_KEY` and `MFA_ENCRYPTION_KEY` remain required; retain the latter to
+verify existing users' TOTP factors during transition. SMTP configuration is read
+by Settings with secret/connection fields excluded from representations.
 
-## Endpoints and flow
-
-All requests are JSON. Token-bearing responses use `Cache-Control: no-store`.
-
-| Method/path under `/api/v1/auth` | Request | Result |
-| --- | --- | --- |
-| POST /register | username, email, password, first_name, last_name, phone_number, optional preferred_contact_method | 201 with MFA_SETUP_REQUIRED, challenge_token, expires_in |
-| POST /login | username (username or email), password | MFA_SETUP_REQUIRED or MFA_REQUIRED plus challenge_token |
-| POST /mfa/setup | challenge_token from setup-required response | provisioning_uri, manual_entry_secret, setup_token, expires_in |
-| POST /mfa/verify-setup | setup_token, six-character code | access_token, refresh_token, token_type, expires_in |
-| POST /mfa/verify | challenge_token from MFA_REQUIRED response, code | access_token, refresh_token, token_type, expires_in |
-| POST /refresh | refresh_token | Rotated access/refresh pair; old session revoked |
-| POST /logout | refresh_token | 204; revoke the session and its rotation descendants |
-| GET /me | Authorization: Bearer access_token | Safe user summary with live roles/permissions and linked complainant/officer IDs |
-
-Registration normalizes usernames/emails to lowercase, creates user + complainant +
-COMPLAINANT assignment + audit event in one transaction, and never issues normal
-access before MFA verification. Usernames are ASCII letters/digits with underscore,
-dot, or hyphen, start with a letter/digit, and cannot contain `@`; this keeps email
-and username lookup namespaces unambiguous. Public request schemas reject unknown
-fields, including role or privilege flags. Passwords require 12 characters, upper-
-and lowercase letters, a number, a special character, and no surrounding whitespace.
-The 1,024-character upper bound rejects oversized passwords; none are truncated.
-Email syntax is validated with EmailStr. TOTP enrollment does not prove email
-ownership, so `is_verified` is not set by enrollment.
-
-For enrollment, scan the provisioning URI with an authenticator using issuer
-`SAPS Case-Docket Management`. The manual secret and URI are returned only once
-per setup attempt, after the encrypted pending method is committed. If that response
-is lost, log in again and begin a fresh setup. A pending method does not count as MFA.
-Only a valid code activates it, sets `mfa_enabled`, and permits token issuance.
-
-Login failures, inactive accounts, locked accounts, and unknown accounts return a
-generic 401. A dummy Argon2 hash is checked for unknown/ineligible accounts. Failed
-password attempts are serialized on the user row and lock the account at the
-configured threshold. After the lock expires the password attempt count can reset.
-Password success resets failed password attempts but cannot bypass MFA.
-
-MFA failures are counted from sanitized, persisted audit events for the user during
-the lock window. Requesting another challenge or successfully verifying a password
-does not erase this MFA guessing budget. Codes accept the current 30-second step
-and one neighboring step on either side. The last accepted step boundary is stored
-in `user_mfa_methods.last_used_at`; an equal or older step is rejected. Immediately
-logging in after enrollment may require waiting for the next authenticator code.
-
-## Tokens, sessions, and concurrency
-
-Access JWTs include sub, sid, type=access, iat, exp, jti, issuer, and audience. Decoding
-requires these claims, valid UUIDs, the correct purpose, expiration, issuer/audience,
-and the configured algorithm. Roles and permissions are never embedded in JWTs.
-
-Temporary MFA tokens have distinct purposes (`mfa_setup`, `mfa_enroll`, `mfa_login`)
-and are bound to short-lived auth_sessions rows. Enrollment verification also binds
-the exact method ID. Their backing session contains the hash of an independent
-random value whose preimage is discarded, so neither the JWT nor its jti can be used
-as a refresh token. Setup is returned once and verification consumes the challenge
-by revoking its session. A client cannot mint an access JWT for a pending session.
-
-Refresh credentials are cryptographically random 48-byte opaque values. Only SHA-256
-hashes are stored. Refresh locks the user and session, creates a replacement, revokes
-the old session, links the replacement, and commits with its audit event. Each new
-refresh session gets the configured lifetime; there is no absolute device-session
-lifetime in this phase. Clients must serialize refresh requests: using a rotated
-credential again rejects the request and revokes that rotation chain as a possible
-theft signal. Unrelated logins remain valid. Expired credentials cannot refresh or
-revoke a newer chain. Logout proves possession of the opaque token, needs no access
-JWT, and is idempotent for an unexpired known session.
-
-All service paths use a consistent lock order: user, session, then MFA method where
-needed. Consuming codes/challenges and rotating credentials is serialized through
-the user lock. Access requests check session expiration/revocation, current user
-active/MFA state, and current database permissions. Rotation/logout therefore
-invalidates access JWTs tied to the revoked session immediately on the next check.
-An account password lock blocks new login/MFA/refresh but does not alone invalidate
-already-issued access; deactivation or session revocation does.
-
-## Reusable dependencies
-
-`get_current_session`, `get_current_user`, `get_current_active_user`, `get_user_roles`,
-`get_user_permissions`, `require_role`, and `require_permission` live in
-`app/modules/authentication/dependencies.py`.
-
-```python
-Depends(require_permission("complaint.register"))
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Missing/invalid/expired/revoked authentication is 401, with a Bearer challenge.
-An authenticated user lacking the required capability receives 403. Permission
-changes take effect without reissuing JWTs. These global dependencies do not grant
-cross-station access: later services must check station or national authority,
-complainant ownership, and active investigator assignment against the actual case.
+Migration `eabef524c593`, following `089c746ed6a9`, adds `user_email_auth` and
+`email_auth_challenges` and grants the runtime role access. It does not rewrite
+applied migrations, backfill verification, reset tables, or change accounts,
+roles, cases or audit history. Run it on each deployment before restarting the
+application. No tables are created at application startup.
 
-## Audit and failure handling
+## Endpoints under `/api/v1/auth`
 
-Events include auth.registration, auth.password_verified, auth.login_failure,
-auth.account_lockout, auth.mfa_setup, auth.mfa_verified, auth.mfa_failure,
-auth.token_refresh, auth.refresh_reuse, auth.session_rejected, and auth.logout.
-Only fixed action names, user/session identifiers, and parsed client IP are written.
-No passwords/hashes, JWTs, refresh credentials/hashes, secrets, OTPs, arbitrary
-request bodies, or provider metadata are copied to audit records.
+| Endpoint | Behavior |
+| --- | --- |
+| POST /register | Existing registration fields; 201 EMAIL_CODE_REQUIRED challenge, masked recipient, five-minute expiry, resend cooldown and SMTP acceptance status |
+| POST /login | Username/email and password; EMAIL_CODE_REQUIRED or TOTP_TRANSITION_REQUIRED for protected legacy accounts |
+| POST /email/verify | challenge_token and code; consumes the challenge and returns normal access/refresh tokens |
+| POST /email/resend | challenge_token; returns a replacement challenge and invalidates every earlier email challenge for the account |
+| POST /email/transition | Legacy password challenge and current TOTP code; authorizes a pending email transition, never issues access tokens |
+| POST /refresh | Existing opaque refresh token rotation/reuse protection |
+| POST /logout | Existing session-family revocation |
+| GET /me | Safe user summary and current database roles/permissions |
 
-Audit writes are in the same transaction as successful mutations. Failure produces
-a generic 503 and rollback, never a successful unaudited login. Rejected credentials
-deliberately commit failure counts and their audit events before returning 401.
-An audit failure on that path also fails closed with rollback and 503. Authentication
-logs use a fixed message without exception parameters or credentials. Validation
-responses strip Pydantic's input/context fields to avoid echoing secrets.
+Retired `/mfa/setup` and `/mfa/verify-setup` return 410. Deprecated `/mfa/verify`
+is an alias for the legacy transition endpoint; it no longer issues normal tokens.
+No new authenticator enrollment or secret/QR display is available. PyOTP and
+Fernet remain necessary for existing-account transition; no QR dependency was
+found in the application requirements.
 
-## Tests and local verification
+## Existing accounts: explicit transition
 
-Run `pytest` from the project root using the virtual environment. API tests override
-get_db with a Session using nested savepoints inside an outer rollback transaction;
-service commits therefore do not retain test records. Existing database tests remain
-rollback-only. Tests cover password/JWT/TOTP primitives, configuration, registration,
-case-insensitive conflicts, privileged-field rejection, MFA setup/login/replay,
-password/MFA lockout, session expiration, refresh/reuse, logout, live RBAC revocation,
-inactive users, audit-failure rollback, no-store responses, HTTPS, and safe summaries.
+TOTP enrollment historically did **not** verify email ownership. No existing
+`is_verified` value alone is trusted as an email authentication method.
 
-`uvicorn app.main:app --reload --host 127.0.0.1 --port 8011` was started for real HTTP
-checks: /docs, /health/database, and /openapi.json returned 200; unauthenticated
-/api/v1/auth/me returned 401. The eight routes were present in OpenAPI. The server
-was stopped after verification. Full registration/enrollment/login flows were checked
-through TestClient with rollback, avoiding permanent smoke-test accounts.
+1. An account with an active TOTP method signs in with its password.
+2. The transition-only screen asks for the existing factor once. It displays no
+   setup key or QR code. Without this proof, email cannot replace the factor.
+3. A code is submitted to the account's recorded email address. The TOTP method
+   remains active until that code is successfully verified.
+4. Successful email verification records the exact verified address/time,
+   deactivates the TOTP method, revokes previous sessions and issues a new session.
+   Future logins use password plus email codes.
 
-The installed Starlette emits two upstream test-client deprecation warnings concerning
-httpx and AnyIO. They do not fail tests; requested httpx remains installed. Before public
-deployment, configure trusted TLS termination, ingress request/body/rate limits,
-secret backup/rotation, observability, and retention for pending/expired auth sessions.
-There is no MFA recovery/reset, password-reset delivery, email verification, session
-management UI, or device-wide logout endpoint in this phase.
+If the user cannot access their existing factor or recorded mailbox, keep the
+account protected. An administrator must complete independently verified account
+recovery before a controlled migration; no self-service factor reset, arbitrary
+email-change or recovery bypass endpoint is introduced here. Do not solve this
+by toggling `mfa_enabled` or `is_verified`. Existing active TOTP sessions remain
+valid until expiry/revocation or successful transition. Existing accounts without
+an enrolled active factor and without an enabled-method flag must prove their
+password and email ownership. Accounts with an enabled-method flag but missing or
+mismatched method state require administrator-assisted recovery; flags alone are
+never treated as proof.
 
-## Library references
+## Security and transactions
 
-- [pwdlib guide](https://frankie567.github.io/pwdlib/guide/)
-- [PyJWT usage and claim validation](https://pyjwt.readthedocs.io/en/stable/usage.html)
-- [PyOTP TOTP and replay/throttling guidance](https://pyauth.github.io/pyotp/)
+Codes use `secrets.randbelow`, expire in exactly five minutes, and are stored as a
+domain-separated HMAC-SHA256 keyed by the existing high-entropy JWT server secret.
+The digest binds account, session/challenge, purpose, recipient and code. No
+plaintext code or unkeyed code hash is stored. Rotating the signing secret
+invalidates outstanding challenges/tokens. The backing challenge session lasts
+30 minutes to allow resend after code expiry; it never works as an access or
+refresh credential. Resend returns a new token; clients must replace the old one.
 
-The next feature phase should implement transactional complaint registration with
-identifier allocation, station/ownership checks, and sanitized audit events using
-these authentication dependencies.
+All code issuance, resend, verification and account transitions serialize on the
+user row, with session locks following it. A consumed challenge cannot succeed
+concurrently a second time. Resend revokes all older email challenges across tabs.
+Code failures are counted from persisted sanitized audit records across challenges
+and purposes in the existing account-lock window. Password success and resend do
+not erase that budget. Defaults are five failures and a 15-minute account lock.
+SMTP attempts, including failed/ambiguous attempts, have a per-account 60-second
+cooldown and ten-per-hour limit. Limits apply to fresh logins as well as resend.
+429 responses include Retry-After. Deployment still requires ingress/IP rate
+limits against registration floods across many distinct accounts.
+
+`user_email_auth` explicitly binds an account to its verified address and timestamp.
+Access dependencies and refresh require an active account, the existing compatibility
+flag, and either a matching verified email method or the retained active legacy
+TOTP method. Setting `mfa_enabled=true` alone grants no access. `is_verified` is
+set only after an email code succeeds. Roles, permissions, station restrictions,
+assignment checks, session rotation, logout and immutable case history remain intact.
+
+SMTP uses certificate-verified STARTTLS, a ten-second connection/socket timeout,
+and no debug logging. SMTP acceptance is **not confirmed inbox delivery**. Failed
+or ambiguous submissions invalidate the attempted code and persist the cooldown;
+they issue no tokens. A newly registered account remains pending so the user can
+return to sign-in and retry after the cooldown. If SMTP accepted but the database
+commit failed, the unusable message may still arrive; sign in again for a new code.
+Never log SMTP exceptions, message bodies, passwords, codes, tokens or credentials.
+
+Authentication mail is separate from D's case notifications. D's backend, SMS,
+confirmations, alerts and dashboards are not redesigned or represented as complete.
+Audit events contain fixed action names and user/session IDs only. Existing password
+hashing, lockouts, generic password failures, sanitized validation errors, HTTPS
+requirements, no-store responses, live RBAC and refresh-family revocation remain.
+
+## Local walkthrough
+
+1. Apply the migration, restart the server and open `/portal/`.
+2. Register using an email inbox you control. Verify that the pending screen shows
+   a masked address, expiry guidance and resend countdown.
+3. Enter the emailed code. An incorrect code keeps the form open; a successful
+   code opens My complaints. Sign out, then sign in with password and a fresh code.
+4. Use `/officer/` for charge officers/commanders and `/investigator/` for investigators.
+   Existing TOTP accounts first complete the one-time protected transition above.
+5. If mail submission fails, inspect local configuration without posting secrets.
+   Wait for the cooldown and return to sign-in. A delayed message from a failed
+   attempt is intentionally invalid. No real delivery test was performed by Codex.
+
+## Automated checks
+
+Tests use an in-memory fake authentication mail adapter globally: no real emails.
+The standalone headless Edge check also installs that adapter before making any
+registration/login request. General regression fixtures bypass the waiting period
+only inside tests; dedicated tests restore production limits and manipulate fixture
+timestamps. PostgreSQL concurrency tests use disposable migrated databases and
+separate connections. Ordinary API/browser fixtures roll back their records.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q --tb=short
+node --test tests/frontend/*.test.mjs
+.\.venv\Scripts\python.exe scripts/check_investigator_browser.py
+.\.venv\Scripts\python.exe -m alembic check
+git diff --check
+```
+
+A owns `app/modules/authentication/*`, the new migration, settings, `.env.example`,
+this document and authentication tests. Shared integration changes cover
+`app/frontend/app.mjs`, `frontend/officer/{index.html,assets/app.js}`,
+`frontend/investigator/assets/app.mjs` and the browser script. Case business modules
+and D-owned modules are unchanged.
+
+## Verification in this checkout (2026-09-25)
+
+The new migration has been applied to the configured local PostgreSQL database;
+Alembic reports `eabef524c593` at head and no pending schema operations. The fake-mail
+headless browser check passes A registration/login and the shared B/C staff login,
+including an incorrect code without lost form progress, then the existing case,
+evidence, custody and session workflows. Ten frontend client tests pass.
+
+The saved SMTP settings were subsequently supplied. A standalone SMTP test was
+accepted and the user confirmed receiving it; this was not a complete real-account
+login test. Login/resend initially ran in a restricted process that could not open
+the SMTP socket (Windows error 10013), while the standalone test ran with network
+access. Run the development server from a normal local terminal with outbound
+SMTP permitted, using the startup command above. Never disable TLS verification
+to work around network restrictions. Restart after saving changes to `.env`.
+
+Resend buttons now show sending/countdown feedback, serialize verification and
+resend requests, honor the server's Retry-After value, and retain a back-to-sign-in
+option when a challenge is unusable. The complainant buttons use a spaced,
+responsive layout. Browser tests exercise resend with delayed fake mail.
+
+Final full Python suite: **214 passed**, two existing Starlette/AnyIO dependency
+deprecation warnings, 96.81 seconds. **10 frontend tests passed**. Browser workflows,
+Alembic current/check and `git diff --check` passed. No automated test remains
+failing or skipped due to unavailable services. Real SMTP delivery was not run.
+Changes remain uncommitted on `feature/investigation-evidence-c`; nothing was
+merged, pushed or reset.
+
+
+Resend follow-up checks: 35 focused authentication tests, four investigator
+frontend/API checks and 11 frontend client tests passed. Login/resend browser
+checks passed before the broader script reached its officer queue check. The
+full browser rerun was not completed: the queue-refresh test selector was
+corrected, but permission for the final Edge rerun was declined. A dossier-loading
+race was also fixed by binding investigator forms before loading that panel.
+`git diff --check` passed. No additional real email was sent during this follow-up.

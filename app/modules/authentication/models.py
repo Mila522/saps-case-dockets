@@ -37,6 +37,31 @@ class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     replacement: Mapped[AuthSession | None] = relationship(remote_side='AuthSession.id', foreign_keys=[replaced_by_session_id])
 
 
+class UserEmailAuth(Base):
+    """Explicit email method, bound to the address actually verified. No backfill."""
+    __tablename__ = 'user_email_auth'
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('case_mgmt.users.id', ondelete='RESTRICT'), primary_key=True)
+    verified_email: Mapped[str] = mapped_column(String(254))
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class EmailChallenge(Base):
+    __tablename__ = 'email_auth_challenges'
+    __table_args__ = (
+        CheckConstraint("purpose IN ('register', 'login', 'transition')", name='purpose'),
+        CheckConstraint("delivery_state IN ('pending', 'accepted', 'failed')", name='delivery_state'),
+        CheckConstraint("code_digest ~ '^[0-9a-f]{64}$'", name='code_digest'),
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('case_mgmt.auth_sessions.id', ondelete='RESTRICT'), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('case_mgmt.users.id', ondelete='RESTRICT'), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    recipient: Mapped[str] = mapped_column(String(254))
+    code_digest: Mapped[str] = mapped_column(String(64))
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    code_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    delivery_state: Mapped[str] = mapped_column(String(20))
+
+
 class UserMfaMethod(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = 'user_mfa_methods'
     __table_args__ = (

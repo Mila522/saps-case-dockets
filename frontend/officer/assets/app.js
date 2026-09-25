@@ -4,7 +4,7 @@ const dossierRequest=(path,options={})=>request(path,{...options,...(options.bod
 if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
   document.documentElement.classList.add('investigator-signin');
   document.title = 'Investigator sign-in · Case Desk prototype';
-  document.querySelector('.security-note').textContent = 'Prototype · Not an official SAPS product · MFA required';
+  document.querySelector('.security-note').textContent = 'Prototype · Not an official SAPS product · Password + email verification';
 }
 
 const state = {
@@ -12,7 +12,10 @@ const state = {
   refreshToken: sessionStorage.getItem('saps_refresh_token'),
   user: null,
   challengeToken: null,
-  setupToken: null,
+  authChallenge: null,
+  resendReadyAt: 0,
+  authBusy: false,
+  resendUnavailable: false,
   complaints: [],
   reasons: [],
   escalations: [],
@@ -79,7 +82,7 @@ async function request(path, options = {}, retry = true) {
   if (state.accessToken) headers.set('Authorization', `Bearer ${state.accessToken}`);
   if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const response = await fetch(`${API}${path}`, { ...options, headers });
-  if (response.status === 401 && retry && state.refreshToken && path !== '/auth/refresh') {
+  if (response.status === 401 && retry && state.refreshToken && (!path.startsWith('/auth/') || path === '/auth/me')) {
     const refreshed = await refreshSession();
     if (refreshed) return request(path, options, false);
   }
@@ -88,6 +91,7 @@ async function request(path, options = {}, retry = true) {
     try { payload = await response.json(); } catch { payload = null; }
     const error = new Error(errorText(payload, `Request failed (${response.status})`));
     error.status = response.status;
+    error.retryAfter = Math.max(0, Number(response.headers.get('Retry-After')) || 0);
     throw error;
   }
   if (response.status === 204) return null;
@@ -127,11 +131,11 @@ function clearSession() {
 }
 
 function setAuthStep(step) {
+  if (step === 'login') { state.challengeToken = null; state.authChallenge = null; state.resendUnavailable = false; }
   $('#login-form').hidden = step !== 'login';
   $('#mfa-form').hidden = step !== 'mfa';
-  $('#setup-form').hidden = step !== 'setup';
   clearMessage($('#auth-message'));
-  const focusTarget = step === 'login' ? '#identifier' : step === 'mfa' ? '#mfa-code' : '#setup-code';
+  const focusTarget = step === 'login' ? '#identifier' : '#mfa-code';
   window.setTimeout(() => $(focusTarget)?.focus(), 0);
 }
 
@@ -189,7 +193,9 @@ async function enterApplication() {
 async function handleLogin(event) {
   event.preventDefault();
   const button = $('button[type="submit"]', event.currentTarget);
+  if (button.disabled) return;
   button.disabled = true;
+  button.textContent = 'Signing in…';
   clearMessage($('#auth-message'));
   try {
     const result = await request('/auth/login', {
@@ -197,44 +203,72 @@ async function handleLogin(event) {
         username: $('#identifier').value.trim(), password: $('#password').value,
       }),
     });
-    state.challengeToken = result.challenge_token;
-    if (result.status === 'MFA_REQUIRED') {
-      setAuthStep('mfa');
-    } else {
-      const setup = await request('/auth/mfa/setup', {
-        method: 'POST', body: JSON.stringify({ challenge_token: state.challengeToken }),
-      });
-      state.setupToken = setup.setup_token;
-      $('#setup-secret').textContent = setup.manual_entry_secret;
-      setAuthStep('setup');
-    }
+    $('#password').value = '';
+    showChallenge(result);
   } catch (error) {
     showMessage($('#auth-message'), error.message);
   } finally {
     button.disabled = false;
+    button.textContent = 'Continue securely';
   }
 }
 
-async function handleMfa(event, setup = false) {
+function showChallenge(result) {
+  state.authChallenge = result;
+  state.challengeToken = result.challenge_token;
+  state.resendReadyAt = Date.now() + result.resend_after * 1000;
+  state.resendUnavailable = false;
+  setAuthStep('mfa');
+  $('#mfa-code').value = '';
+  const transition = result.status === 'TOTP_TRANSITION_REQUIRED';
+  $('#email-guidance').textContent = transition
+    ? 'Verify your existing authenticator once to authorize switching to email. If it is unavailable, contact your account administrator for identity recovery.'
+    : `Code submitted to the mail server for ${result.masked_recipient}. Check inbox or spam; expires in five minutes. Inbox delivery is not confirmed.`;
+  $('#resend-code').hidden = transition;
+  updateVerificationButtons();
+}
+function updateVerificationButtons() {
+  const left = Math.max(0, Math.ceil((state.resendReadyAt - Date.now()) / 1000));
+  $$('#mfa-form button').forEach(button => button.disabled = state.authBusy);
+  $('#resend-code').disabled = state.authBusy || left > 0 || state.resendUnavailable;
+  $('#resend-code').textContent = state.authBusy === 'resend' ? 'Sending code…' : state.resendUnavailable ? 'Return to sign-in to retry' : left ? `Resend code (${left}s)` : 'Resend code';
+  $('#mfa-form button[type=submit]').textContent = state.authBusy === 'verify' ? 'Verifying…' : 'Verify and sign in';
+}
+setInterval(updateVerificationButtons, 500);
+async function handleMfa(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const button = $('button[type="submit"]', form);
-  button.disabled = true;
+  if (state.authBusy) return;
+  state.authBusy = 'verify';
+  updateVerificationButtons();
   clearMessage($('#auth-message'));
   try {
-    const path = setup ? '/auth/mfa/verify-setup' : '/auth/mfa/verify';
-    const payload = setup
-      ? { setup_token: state.setupToken, code: $('#setup-code').value }
-      : { challenge_token: state.challengeToken, code: $('#mfa-code').value };
-    setTokens(await request(path, { method: 'POST', body: JSON.stringify(payload) }));
+    const transition = state.authChallenge.status === 'TOTP_TRANSITION_REQUIRED';
+    const result = await request(transition ? '/auth/email/transition' : '/auth/email/verify', {
+      method:'POST', body:JSON.stringify({challenge_token:state.challengeToken,code:$('#mfa-code').value})
+    });
+    if (transition) { showChallenge(result); return; }
+    setTokens(result);
     form.reset();
+    state.challengeToken = null;
+    state.authChallenge = null;
     await enterApplication();
-  } catch (error) {
-    showMessage($('#auth-message'), error.message);
-  } finally {
-    button.disabled = false;
-  }
+  } catch(error) { showMessage($('#auth-message'), error.message); }
+  finally { state.authBusy = false; updateVerificationButtons(); }
 }
+$('#resend-code').addEventListener('click', async () => {
+  if (state.authBusy || state.resendUnavailable || !state.challengeToken || Date.now() < state.resendReadyAt) return;
+  state.authBusy = 'resend'; updateVerificationButtons(); clearMessage($('#auth-message'));
+  try {
+    showChallenge(await request('/auth/email/resend', {method:'POST',body:JSON.stringify({challenge_token:state.challengeToken})}));
+    showMessage($('#auth-message'), 'A new code was submitted. Check your inbox or spam folder and use the newest code.', true);
+  } catch(error) {
+    if (error.retryAfter) state.resendReadyAt = Date.now() + error.retryAfter * 1000;
+    if (error.status === 401 || error.status === 503) state.resendUnavailable = true;
+    showMessage($('#auth-message'), error.message);
+  } finally { state.authBusy = false; updateVerificationButtons(); }
+});
 
 async function logout() {
   const refreshToken = state.refreshToken;
@@ -589,7 +623,6 @@ function bindEvents() {
   };
   $('#login-form').addEventListener('submit', handleLogin);
   $('#mfa-form').addEventListener('submit', event => handleMfa(event, false));
-  $('#setup-form').addEventListener('submit', event => handleMfa(event, true));
   $$('.back-auth').forEach(button => button.addEventListener('click', () => setAuthStep('login')));
   $('#logout-button').addEventListener('click', logout);
   $$('.nav-item').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));

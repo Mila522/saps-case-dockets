@@ -40,9 +40,12 @@ class LoginRequest(StrictRequest):
 
 
 class LoginResponse(BaseModel):
-    status: Literal['MFA_SETUP_REQUIRED', 'MFA_REQUIRED']
+    status: Literal['EMAIL_CODE_REQUIRED', 'TOTP_TRANSITION_REQUIRED']
     challenge_token: str
     expires_in: int
+    masked_recipient: str | None = None
+    resend_after: int = 0
+    delivery_status: Literal['accepted_by_mail_server'] | None = None
 
 
 class MfaSetupRequest(StrictRequest):

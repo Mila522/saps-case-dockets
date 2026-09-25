@@ -17,7 +17,7 @@ async function run(task) {
   catch (error) {
     if (error.status === 401) { api.clear(); session(false); login(); }
     note(error.message);
-  } finally { busy = false; document.querySelectorAll('button').forEach(b => b.disabled = false); }
+  } finally { busy = false; document.querySelectorAll('button').forEach(b => b.disabled = b.dataset.unavailable === 'true' || Number(b.dataset.readyAt || 0) > Date.now()); }
 }
 function page(title) { view.replaceChildren(); const heading = document.createElement('h2'); heading.textContent = title; view.append(heading); }
 function text(value, tag = 'p', parent = view) { const node = document.createElement(tag); node.textContent = value; parent.append(node); return node; }
@@ -52,23 +52,44 @@ function register() {
 }
 async function mfa(challenge) {
   page('Verify your sign-in');
-  let setup = null;
-  if (challenge.status === 'MFA_SETUP_REQUIRED') {
-    text('Account password accepted. Add a time-based account in your authenticator app using this setup key.');
-    // Keep a retry button available if setup fails after account creation.
-    button('Set up authenticator', async () => {
-      setup = await post('/auth/mfa/setup', {challenge_token:challenge.challenge_token});
-      page('Set up your authenticator');
-      text('Choose a time-based account (30 seconds, 6 digits) in your authenticator app. Enter this key, then enter the generated code below.');
-      text(setup.manual_entry_secret, 'code'); verification();
-    });
-  } else { text('Enter the six-digit code from your authenticator app.'); verification(); }
-  function verification() {
-    form([['code','Authenticator code',{inputmode:'numeric',pattern:'[0-9]{6}',minlength:6,maxlength:6,autocomplete:'one-time-code'}]], 'Verify', async data => {
-      const tokens = await post(setup ? '/auth/mfa/verify-setup' : '/auth/mfa/verify', setup ? {setup_token:setup.setup_token,code:data.code} : {challenge_token:challenge.challenge_token,code:data.code});
-      api.setTokens(tokens); session(true); page('Signed in'); await mine();
-    });
+  const transition = challenge.status === 'TOTP_TRANSITION_REQUIRED';
+  text(transition ? 'To protect your existing account, verify your current authenticator once before switching to email. If you no longer have it, contact your account administrator for identity recovery.' : `A code was submitted to the mail server for ${challenge.masked_recipient}. Check your inbox or spam folder. It expires in five minutes; inbox delivery is not confirmed.`);
+  const verification = form([['code',transition ? 'Existing account verification code' : 'Six-digit email code',{inputmode:'numeric',pattern:'[0-9]{6}',minlength:6,maxlength:6,autocomplete:'one-time-code'}]], 'Verify and sign in', async data => {
+    const submit = verification.querySelector('[type=submit]');
+    submit.textContent = 'Verifying…';
+    try {
+      const result = await post(transition ? '/auth/email/transition' : '/auth/email/verify', {challenge_token:challenge.challenge_token,code:data.code});
+      if (transition) return mfa(result);
+      api.setTokens(result); session(true); page('Signed in'); await mine();
+    } catch(error) { note(error.message); } // Preserve the code form and challenge on failure.
+    finally { submit.textContent = 'Verify and sign in'; }
+  });
+  const actions = document.createElement('div'); actions.className = 'verification-actions'; view.append(actions);
+  if (!transition) {
+    let readyAt = Date.now() + challenge.resend_after * 1000;
+    const resend = button('Resend code', async () => {
+      if (Date.now() < readyAt) { note('Please wait for the resend cooldown.'); return; }
+      resend.textContent = 'Sending code…';
+      resend.dataset.sending = 'true';
+      try {
+        await mfa(await post('/auth/email/resend', {challenge_token:challenge.challenge_token}));
+        note('A new code was submitted. Check your inbox or spam folder and use the newest code.');
+      } catch(error) {
+        if (error.retryAfter) { readyAt = Date.now() + error.retryAfter * 1000; resend.dataset.readyAt = readyAt; }
+        if (error.status === 401 || error.status === 503) resend.dataset.unavailable = 'true';
+        note(error.message);
+      } finally { resend.dataset.sending = 'false'; }
+    }, actions);
+    resend.id = 'resend-code'; resend.dataset.readyAt = readyAt;
+    const tick = () => {
+      if (!resend.isConnected) return;
+      const left = Math.max(0, Math.ceil((readyAt-Date.now())/1000));
+      resend.disabled = left > 0 || busy || resend.dataset.unavailable === 'true';
+      resend.textContent = resend.dataset.sending === 'true' ? 'Sending code…' : resend.dataset.unavailable === 'true' ? 'Return to sign-in to retry' : left ? `Resend code (${left}s)` : 'Resend code';
+      setTimeout(tick, 250);
+    }; tick();
   }
+  button('Back to sign-in', login, actions).className = 'back-signin';
 }
 async function mine(offset = 0) {
   page('My complaints'); text('Loading complaints…');
@@ -99,14 +120,14 @@ async function detail(id) {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : 'Not started'; }
 async function newComplaint() {
-  page('Submit a complaint'); text('Loading stations…');
-  const stations = await api.request('/complaints/receiving-stations');
   page('Submit a complaint');
-  if (!stations.length) { text('No receiving stations are available. Please try again later.'); return; }
-  form([['station_id','Receiving station',{tag:'select',choices:[['','Select a station'],...stations.map(s => [s.id,`${s.name} · ${s.province}`])]}],
+  const stationStatus = text('Loading receiving stations…');
+  stationStatus.setAttribute('role', 'status');
+  const complaintForm = form([['station_id','Receiving station',{tag:'select',choices:[['','Loading stations…']]}],
     ['crime_category','Crime category',{maxlength:150}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
     ['incident_location','Incident location',{maxlength:255}],['incident_city','City (optional)',{optional:true,maxlength:150}],
     ['incident_province','Province',{maxlength:100}],['incident_occurred_at','Incident date and time (optional)',{type:'datetime-local',optional:true,hint:'Enter the time in your device’s local timezone.'}]], 'Submit complaint', async (data, node) => {
+      if (stationSelect.disabled || !stationSelect.value) throw new Error('Select a receiving station before submitting.');
       for (const key of Object.keys(data)) data[key] = data[key].trim();
       for (const key of ['crime_category','incident_description','incident_location','incident_province']) if (!data[key]) throw new Error('Complete all required fields with more than spaces.');
       if (data.incident_occurred_at) { const occurred = new Date(data.incident_occurred_at); if (occurred > new Date()) throw new Error('The incident date cannot be in the future.'); data.incident_occurred_at = occurred.toISOString(); } else delete data.incident_occurred_at;
@@ -115,6 +136,35 @@ async function newComplaint() {
       page('Complaint submitted'); text('Keep your reference number:'); text(result.reference_number,'code');
       text('Status: ' + result.status.replaceAll('_',' ')); button('Track this complaint', () => detail(result.id)); button('My complaints', () => mine());
     });
+  const stationSelect = complaintForm.querySelector('[name=station_id]');
+  const submit = complaintForm.querySelector('[type=submit]');
+  const retry = button('Retry loading stations', loadStations);
+  async function loadStations() {
+    stationSelect.disabled = true;
+    submit.disabled = true;
+    submit.dataset.unavailable = 'true';
+    retry.hidden = true;
+    stationStatus.textContent = 'Loading receiving stations…';
+    try {
+      const stations = await api.request('/complaints/receiving-stations');
+      stationSelect.replaceChildren();
+      const placeholder = text(stations.length ? 'Select a station' : 'No stations available', 'option', stationSelect);
+      placeholder.value = '';
+      for (const station of stations) {
+        const option = text(`${station.name} · ${station.province}`, 'option', stationSelect);
+        option.value = station.id;
+      }
+      stationSelect.disabled = !stations.length;
+      submit.dataset.unavailable = String(!stations.length);
+      stationStatus.textContent = stations.length ? 'Choose the station that should receive your complaint.' : 'No active receiving stations are configured. Contact the project administrator. You can fill in the details below, but cannot submit yet.';
+      retry.hidden = !!stations.length;
+    } catch (error) {
+      stationStatus.textContent = 'Receiving stations could not be loaded. Your entered details are kept; use Retry loading stations.';
+      retry.hidden = false;
+      throw error;
+    }
+  }
+  await loadStations();
 }
 document.querySelector('#login-tab').onclick = () => run(async () => login());
 document.querySelector('#register-tab').onclick = () => run(async () => register());

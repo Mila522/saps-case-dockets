@@ -75,3 +75,17 @@ test('logout clears tab session even when offline',async()=>{
 test('record text is escaped before rendering',()=>{
   assert.equal(escape('<script>"&\'</script>'),'&lt;script&gt;&quot;&amp;&#39;&lt;/script&gt;');
 });
+
+test('email verification and SMTP errors retain their sanitized guidance without refresh',async()=>{
+  let calls=0;
+  const api=createClient(async()=>{calls++;return json({detail:'Code is incorrect or expired. Try again or request a new code.'},401);});
+  await assert.rejects(api.request('/auth/email/verify',{method:'POST',body:{challenge_token:'test',code:'123456'}}),/incorrect or expired/);
+  assert.equal(calls,1);
+  const unavailable=createClient(async()=>json({detail:'Email submission could not be confirmed. Return to sign-in.'},503));
+  await assert.rejects(unavailable.request('/auth/register',{method:'POST',body:{}}),/submission could not be confirmed/);
+});
+
+test('resend throttling exposes the server retry delay',async()=>{
+  const api=createClient(async()=>new Response(JSON.stringify({detail:'Please wait before requesting another email code.'}),{status:429,headers:{'Content-Type':'application/json','Retry-After':'90'}}));
+  await assert.rejects(api.request('/auth/email/resend',{method:'POST',body:{challenge_token:'test'}}),error=>error.status===429 && error.retryAfter===90);
+});

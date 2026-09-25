@@ -35,7 +35,6 @@ export async function docketDetail(ctx,id) {
     ${evidenceForm}
     ${section('status-history','Status history',history.length?`<ol class="timeline">${history.map(row=>`<li><h3>${e(row.from_status?label(row.from_status)+' → ':'')}${e(label(row.to_status))}</h3><p class="meta">${e(date(row.changed_at))} · User ${e(row.changed_by_user_id===ctx.user.id?ctx.user.username:row.changed_by_user_id)}</p><p>${e(row.change_reason||'No reason recorded')}</p></li>`).join('')}</ol>`:empty('No status changes recorded.'))}
     ${statusForm}`,docket.cas_number);
-  await mountMaterials(document.querySelector('#case-materials'),docket.complaint_id,(path,options)=>ctx.api.request(path,options));
   document.querySelector('#refresh').onclick=()=>ctx.run(async()=>{await ctx.load();notice('Docket refreshed.',true);});
   if(ctx.has('evidence.manage')) {
     const type=document.querySelector('#evidence-type-filter'), status=document.querySelector('#evidence-status-filter'),digital=document.querySelector('#digital-filter');
@@ -66,4 +65,10 @@ export async function docketDetail(ctx,id) {
     const item=await ctx.api.request(`/dockets/${id}/evidence`,{method:'POST',body:data});
     await ctx.load();notice(`Evidence registered: ${item.evidence_reference}`,true);
   });
+  // Bind case forms before loading the independently rendered dossier panel.
+  // Otherwise a fast submit can perform native navigation while handlers wait.
+  const materialsPanel = document.querySelector('#case-materials');
+  void mountMaterials(materialsPanel,docket.complaint_id,(path,options)=>ctx.api.request(path,options))
+    .catch(()=>{materialsPanel.textContent='Unable to load statements. Refresh the docket to retry.';});
+
 }

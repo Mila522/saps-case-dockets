@@ -42,28 +42,15 @@
           <div class="field">
             <label for="mfa-code">Six-digit authentication code</label>
             <input id="mfa-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required>
-            <p class="field-hint">Open your authenticator app and enter the current code.</p>
+            <p class="field-hint"><span id="email-guidance"></span></p>
           </div>
           <button class="button button-primary button-block" type="submit">Verify and sign in</button>
-        </form>
-
-        <form id="setup-form" class="form-stack" hidden>
-          <button class="text-button back-auth" type="button">← Back to sign in</button>
-          <div class="setup-callout">
-            <strong>Set up multi-factor authentication</strong>
-            <p>Add this key to your authenticator app, then enter the six-digit code.</p>
-            <code id="setup-secret"></code>
-          </div>
-          <div class="field">
-            <label for="setup-code">Six-digit authentication code</label>
-            <input id="setup-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required>
-          </div>
-          <button class="button button-primary button-block" type="submit">Complete setup</button>
+          <button id="resend-code" class="text-button" type="button">Resend code</button>
         </form>
 
         <div class="message" id="auth-message" role="alert" hidden></div>
       </div>
-      <p class="security-note">Protected system · MFA required · Access is station and role scoped</p>
+      <p class="security-note">Protected system · Password + email verification · Access is station and role scoped</p>
     </div>
   </section>
 

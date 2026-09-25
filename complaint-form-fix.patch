@@ -1,0 +1,216 @@
+diff --git a/app/modules/complaints/schemas.py b/app/modules/complaints/schemas.py
+--- a/app/modules/complaints/schemas.py
++++ b/app/modules/complaints/schemas.py
+@@ -5,6 +5,13 @@
+ 
+ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, EmailStr
+ from app.modules.evidence.schemas import EvidenceOut
++
++
++class ReceivingStationOut(BaseModel):
++    model_config = ConfigDict(from_attributes=True)
++    id: uuid.UUID
++    name: str
++    province: str
+ 
+ 
+ class ComplaintTracking(BaseModel):
+diff --git a/app/modules/complaints/service.py b/app/modules/complaints/service.py
+--- a/app/modules/complaints/service.py
++++ b/app/modules/complaints/service.py
+@@ -9,7 +9,7 @@
+ from app.modules.audit.models import AuditLog
+ from app.modules.complainants.models import Complainant
+ from app.modules.complaints.models import Complaint, ComplaintStatement, Witness, WitnessStatement
+-from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage
++from app.modules.complaints.schemas import ComplaintTracking, ComplaintTrackingPage, ReceivingStationOut
+ from app.modules.complaints.schemas import ComplaintRegistration, StationComplaintOut, StationComplaintPage
+ from app.modules.access.models import Role, UserRole, User
+ from app.modules.dockets.models import Docket
+@@ -22,6 +22,22 @@
+ class ComplaintRegistrationService:
+     def __init__(self, db: Session):
+         self.db = db
++
++    def receiving_stations(self, user_id: uuid.UUID) -> list[ReceivingStationOut]:
++        try:
++            rows = self.db.scalars(select(Station).where(Station.is_active.is_(True))
++                .order_by(Station.province, Station.name, Station.id)).all()
++            result = [ReceivingStationOut.model_validate(row) for row in rows]
++            self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
++                                action='station.list_receiving', entity_type='station'))
++            self.db.commit()
++            return result
++        except SQLAlchemyError:
++            self.db.rollback()
++            raise HTTPException(503, 'Receiving stations unavailable') from None
++        except Exception:
++            self.db.rollback()
++            raise
+ 
+     def register(self, user_id: uuid.UUID, data: ComplaintRegistration) -> ComplaintTracking:
+         try:
+diff --git a/app/modules/complaints/router.py b/app/modules/complaints/router.py
+--- a/app/modules/complaints/router.py
++++ b/app/modules/complaints/router.py
+@@ -11,7 +11,7 @@
+                                              StationComplaintOut, StationComplaintPage)
+ from app.modules.complaints.service import ComplaintTrackingService
+ from app.modules.complaints.service import ComplaintRegistrationService
+-from app.modules.complaints.schemas import ComplaintRegistration
++from app.modules.complaints.schemas import ComplaintRegistration, ReceivingStationOut
+ from app.modules.complaints.service import StationComplaintService
+ from app.modules.complaints.intake import ComplaintIntakeService
+ from app.modules.complaints.schemas import (InStationRegistration, ReferenceTrackingRequest,
+@@ -23,6 +23,12 @@
+ 
+ def get_registration_service(db: Session = Depends(get_db)) -> ComplaintRegistrationService:
+     return ComplaintRegistrationService(db)
++
++
++@router.get('/receiving-stations', response_model=list[ReceivingStationOut])
++def receiving_stations(user: User = Depends(require_permission('complaint.submit')),
++                      service: ComplaintRegistrationService = Depends(get_registration_service)):
++    return service.receiving_stations(user.id)
+ 
+ 
+ @router.post('', response_model=ComplaintTracking, status_code=201)
+diff --git a/app/frontend/app.mjs b/app/frontend/app.mjs
+--- a/app/frontend/app.mjs
++++ b/app/frontend/app.mjs
+@@ -120,14 +120,14 @@
+ }
+ function date(value) { return value ? new Date(value).toLocaleString() : 'Not started'; }
+ async function newComplaint() {
+-  page('Submit a complaint'); text('Loading stations…');
+-  const stations = await api.request('/complaints/receiving-stations');
+   page('Submit a complaint');
+-  if (!stations.length) { text('No receiving stations are available. Please try again later.'); return; }
+-  form([['station_id','Receiving station',{tag:'select',choices:[['','Select a station'],...stations.map(s => [s.id,`${s.name} · ${s.province}`])]}],
++  const stationStatus = text('Loading receiving stations…');
++  stationStatus.setAttribute('role', 'status');
++  const complaintForm = form([['station_id','Receiving station',{tag:'select',choices:[['','Loading stations…']]}],
+     ['crime_category','Crime category',{maxlength:150}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
+     ['incident_location','Incident location',{maxlength:255}],['incident_city','City (optional)',{optional:true,maxlength:150}],
+     ['incident_province','Province',{maxlength:100}],['incident_occurred_at','Incident date and time (optional)',{type:'datetime-local',optional:true,hint:'Enter the time in your device’s local timezone.'}]], 'Submit complaint', async (data, node) => {
++      if (stationSelect.disabled || !stationSelect.value) throw new Error('Select a receiving station before submitting.');
+       for (const key of Object.keys(data)) data[key] = data[key].trim();
+       for (const key of ['crime_category','incident_description','incident_location','incident_province']) if (!data[key]) throw new Error('Complete all required fields with more than spaces.');
+       if (data.incident_occurred_at) { const occurred = new Date(data.incident_occurred_at); if (occurred > new Date()) throw new Error('The incident date cannot be in the future.'); data.incident_occurred_at = occurred.toISOString(); } else delete data.incident_occurred_at;
+@@ -136,6 +136,35 @@
+       page('Complaint submitted'); text('Keep your reference number:'); text(result.reference_number,'code');
+       text('Status: ' + result.status.replaceAll('_',' ')); button('Track this complaint', () => detail(result.id)); button('My complaints', () => mine());
+     });
++  const stationSelect = complaintForm.querySelector('[name=station_id]');
++  const submit = complaintForm.querySelector('[type=submit]');
++  const retry = button('Retry loading stations', loadStations);
++  async function loadStations() {
++    stationSelect.disabled = true;
++    submit.disabled = true;
++    submit.dataset.unavailable = 'true';
++    retry.hidden = true;
++    stationStatus.textContent = 'Loading receiving stations…';
++    try {
++      const stations = await api.request('/complaints/receiving-stations');
++      stationSelect.replaceChildren();
++      const placeholder = text(stations.length ? 'Select a station' : 'No stations available', 'option', stationSelect);
++      placeholder.value = '';
++      for (const station of stations) {
++        const option = text(`${station.name} · ${station.province}`, 'option', stationSelect);
++        option.value = station.id;
++      }
++      stationSelect.disabled = !stations.length;
++      submit.dataset.unavailable = String(!stations.length);
++      stationStatus.textContent = stations.length ? 'Choose the station that should receive your complaint.' : 'No active receiving stations are configured. Contact the project administrator. You can fill in the details below, but cannot submit yet.';
++      retry.hidden = !!stations.length;
++    } catch (error) {
++      stationStatus.textContent = 'Receiving stations could not be loaded. Your entered details are kept; use Retry loading stations.';
++      retry.hidden = false;
++      throw error;
++    }
++  }
++  await loadStations();
+ }
+ document.querySelector('#login-tab').onclick = () => run(async () => login());
+ document.querySelector('#register-tab').onclick = () => run(async () => register());
+diff --git a/tests/test_complaint_registration.py b/tests/test_complaint_registration.py
+--- a/tests/test_complaint_registration.py
++++ b/tests/test_complaint_registration.py
+@@ -25,6 +25,26 @@
+     return dict(station_id=str(station.id), crime_category='Theft',
+                 incident_description='Private description', incident_location='Private address',
+                 incident_province='Test') | changes
++
++
++def test_receiving_station_directory_is_authenticated_and_active_only(auth_context):
++    client, db = auth_context
++    headers, _, _ = account(client, db)
++    active_id = uuid.UUID(payload(db)['station_id'])
++    inactive_id = uuid.UUID(payload(db)['station_id'])
++    db.get(Station, inactive_id).is_active = False
++    db.commit()
++    url = '/api/v1/complaints/receiving-stations'
++    assert client.get(url).status_code == 401
++    response = client.get(url, headers=headers)
++    assert response.status_code == 200
++    rows = {row['id']: row for row in response.json()}
++    assert str(active_id) in rows and str(inactive_id) not in rows
++    assert set(rows[str(active_id)]) == {'id', 'name', 'province'}
++    permission = db.scalar(select(Permission.id).where(Permission.code == 'complaint.submit'))
++    db.execute(delete(RolePermission).where(RolePermission.permission_id == permission))
++    db.commit()
++    assert client.get(url, headers=headers).status_code == 403
+ 
+ 
+ def test_registration_owned_trackable_and_numbered(auth_context):
+diff --git a/tests/frontend/complaint-form.test.mjs b/tests/frontend/complaint-form.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/frontend/complaint-form.test.mjs
+@@ -0,0 +1,46 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {readFileSync} from 'node:fs';
++import vm from 'node:vm';
++
++const source = readFileSync(new URL('../../app/frontend/app.mjs', import.meta.url), 'utf8');
++const functionSource = source.slice(source.indexOf('async function newComplaint()'), source.indexOf("document.querySelector('#login-tab')"));
++function harness(request) {
++  const nodes = [], fields = [], buttons = [];
++  const select = {disabled: false, children: [], replaceChildren() { this.children = []; }};
++  const submit = {disabled: false, dataset: {}};
++  const text = (value, tag='p', parent) => {
++    const node = {textContent: value, tag, dataset: {}, setAttribute() {}};
++    nodes.push(node); parent?.children?.push(node); return node;
++  };
++  const context = vm.createContext({api:{request}, page(){}, text,
++    form(items) { fields.push(...items); return {querySelector: s => s === '[name=station_id]' ? select : submit}; },
++    button(label, action) { const b={label, action}; buttons.push(b); return b; }
++  });
++  vm.runInContext(functionSource, context);
++  return {start:()=>context.newComplaint(), nodes, fields, buttons, select, submit};
++}
++test('fields exist before station loading completes; success enables station selection', async () => {
++  let resolve;
++  const h=harness(()=>new Promise(r=>{resolve=r;}));
++  const loading=h.start();
++  assert(h.fields.some(([name])=>name==='incident_description'));
++  assert.equal(h.submit.dataset.unavailable, 'true');
++  resolve([{id:'station-1',name:'Demo',province:'Test'}]);
++  await loading;
++  assert.equal(h.select.disabled,false);
++  assert.equal(h.submit.dataset.unavailable,'false');
++  assert.equal(h.select.children[1].value,'station-1');
++});
++test('failed load retains form and offers retry; empty list keeps submission blocked', async () => {
++  let fail=true;
++  const h=harness(async()=>{if(fail) throw new Error('Unavailable'); return [];});
++  await assert.rejects(h.start(), /Unavailable/);
++  assert(h.fields.some(([name])=>name==='incident_location'));
++  assert.equal(h.buttons[0].hidden,false);
++  fail=false;
++  await h.buttons[0].action();
++  assert.equal(h.select.disabled,true);
++  assert.equal(h.submit.dataset.unavailable,'true');
++  assert(h.nodes.some(n=>n.textContent.includes('No active receiving stations')));
++});

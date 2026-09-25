@@ -18,7 +18,6 @@ import time
 from urllib.request import urlopen
 import uuid
 
-import pyotp
 from sqlalchemy import select, text
 import uvicorn
 from websockets.sync.client import connect
@@ -31,6 +30,8 @@ from app.db.session import get_db
 from app.modules.access.models import User, Role, UserRole
 from app.modules.stations.models import Station, Officer
 from test_authentication import registration
+from auth_mailbox import send, code_for
+from app.modules.authentication import mail
 from test_decisions_dockets import workflow_context, officer_account, complaint_at_station
 
 
@@ -97,13 +98,19 @@ def check():
     edge = Path(os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')) / 'Microsoft/Edge/Application/msedge.exe'
     if not edge.exists():
         raise SystemExit('Microsoft Edge is required for this optional browser check.')
+    original_mail, original_cooldown = mail.send_code, settings.email_resend_seconds
+    def slow_fake_mail(recipient, code):
+        time.sleep(.5)  # Keep pending UI observable; no SMTP connection.
+        send(recipient, code)
+    mail.send_code = slow_fake_mail
+    settings.email_resend_seconds = 0
     fixture = workflow_context.__wrapped__()
     client, db = next(fixture)
     original_storage = settings.evidence_storage_path
     server = process = browser = None
     artifacts = Path(os.environ.get('SAPS_BROWSER_ARTIFACTS', str(ROOT / 'docs' / 'investigator-preview')))
     artifacts.mkdir(parents=True, exist_ok=True)
-    temporary_context = tempfile.TemporaryDirectory(prefix='investigator-browser-')
+    temporary_context = tempfile.TemporaryDirectory(prefix='investigator-browser-', ignore_cleanup_errors=True)
     try:
         with nullcontext(temporary_context.name) as temporary:
             temp = Path(temporary)
@@ -153,15 +160,49 @@ def check():
             debugging_port = port_file.read_text().splitlines()[0]
             pages = json.load(urlopen(f'http://127.0.0.1:{debugging_port}/json/list'))
             browser = Browser(next(page['webSocketDebuggerUrl'] for page in pages if page['type']=='page'))
+            # A portal registration/login through the same fake-email backend.
+            citizen = registration()
+            browser.navigate(base + '/portal/')
+            browser.wait("!!document.querySelector('#field-username')")
+            browser.click('#register-tab')
+            for key,value in citizen.items(): browser.fill('#field-'+key, value)
+            browser.submit('#view form')
+            browser.wait("!!document.querySelector('#field-code')")
+            assert browser.js("document.querySelector('#view').textContent.includes('***@')")
+            browser.wait("!document.querySelector('#resend-code').disabled")
+            browser.click('#resend-code')
+            assert browser.js("document.querySelector('#resend-code').disabled && document.querySelector('#resend-code').textContent.includes('Sending')")
+            browser.wait("document.querySelector('#message').textContent.includes('A new code was submitted')")
+            browser.fill('#field-code', '999999' if code_for(citizen['email']) != '999999' else '888888')
+            browser.submit('#view form')
+            browser.wait("document.querySelector('#message').textContent.includes('incorrect')")
+            assert browser.js("!!document.querySelector('#field-code')")
+            browser.fill('#field-code', code_for(citizen['email'])); browser.submit('#view form')
+            browser.wait("document.querySelector('#view h2').textContent==='My complaints'")
+            browser.click('#logout')
+            browser.wait("!!document.querySelector('#field-username')")
+            browser.fill('#field-username', citizen['username']); browser.fill('#field-password', citizen['password'])
+            browser.submit('#view form')
+            browser.wait("!!document.querySelector('#field-code')")
+            browser.fill('#field-code', code_for(citizen['email'])); browser.submit('#view form')
+            browser.wait("document.querySelector('#view h2').textContent==='My complaints'")
+            browser.click('#logout')
             browser.navigate(base + '/investigator/')
             browser.wait("document.body.innerText.includes('Sign in securely')")
             browser.click('a[href="/officer/?workspace=investigator"]')
             browser.wait("!!document.querySelector('#identifier')")
             browser.fill('#identifier', credentials['username']); browser.fill('#password', credentials['password'])
             browser.submit('#login-form')
-            browser.wait("!document.querySelector('#setup-form').hidden && document.querySelector('#setup-secret').textContent.length>10")
-            secret = browser.js("document.querySelector('#setup-secret').textContent")
-            browser.fill('#setup-code', pyotp.TOTP(secret).now()); browser.submit('#setup-form')
+            browser.wait("!document.querySelector('#mfa-form').hidden && document.querySelector('#email-guidance').textContent.includes('five minutes')")
+            browser.wait("!document.querySelector('#resend-code').disabled")
+            browser.click('#resend-code')
+            assert browser.js("document.querySelector('#resend-code').disabled && document.querySelector('#mfa-form button[type=submit]').disabled")
+            browser.wait("document.querySelector('#auth-message').textContent.includes('A new code was submitted')")
+            browser.fill('#mfa-code', '999999' if code_for(credentials['email']) != '999999' else '888888')
+            browser.submit('#mfa-form')
+            browser.wait("document.querySelector('#auth-message').textContent.includes('incorrect')")
+            assert browser.js("!document.querySelector('#mfa-form').hidden")
+            browser.fill('#mfa-code', code_for(credentials['email'])); browser.submit('#mfa-form')
             browser.wait("location.pathname==='/investigator/' && !!document.querySelector('#dockets a')")
             assert browser.js("document.querySelector('#dockets').innerText.includes('Open docket')")
             browser.screenshot(artifacts / 'queue-desktop.png')
@@ -170,7 +211,9 @@ def check():
             browser.wait("!!document.querySelector('#note-form')")
             browser.js("document.querySelector('#note-form').parentElement.open=true")
             browser.fill('#content','  Browser verification note  ')
-            browser.submit('#note-form'); browser.submit('#note-form')
+            # Dispatch in one browser task: the first response may replace the
+            # form before a second round trip through the debugger completes.
+            browser.js("(()=>{const form=document.querySelector('#note-form');form.requestSubmit();form.requestSubmit();})()")
             browser.wait("document.querySelector('#notice').textContent==='Investigation note saved.'")
             assert browser.js("document.querySelectorAll('#notes li').length") == 1
             browser.js("document.querySelector('#evidence-form').parentElement.open=true")
@@ -271,7 +314,12 @@ def check():
             browser.wait("document.querySelector('#complaint-dialog').open")
             browser.click('input[name=decision][value=ACCEPTED]');browser.submit('#complaint-action-form')
             browser.wait("document.querySelector('#global-message').textContent.includes('created and awaiting commander approval')")
-            assert client.get('/api/v1/complaints/station',headers=new_headers).json()['items'][0]['cas_number']
+            accepted = next(row for row in client.get('/api/v1/complaints/station',headers=new_headers).json()['items'] if row['id']==walk['id'])
+            assert accepted['cas_number']
+            # Success feedback precedes the asynchronous queue refresh. Wait for
+            # the new row before opening its docket-dependent material actions.
+            selector = f'[data-complaint-action=view][data-id="{walk["id"]}"]'
+            browser.wait(f'!!document.querySelector({json.dumps(selector)})')
             browser.click(f'[data-complaint-action=materials][data-id="{walk["id"]}"]')
             browser.wait("!!document.querySelector('#materials-content form[data-action=evidence]')")
             browser.js("document.querySelector('#materials-content form[data-action=evidence]').parentElement.open=true")
@@ -286,7 +334,7 @@ def check():
             browser.wait("document.querySelector('#notice').textContent==='You have signed out.'")
             assert browser.js("sessionStorage.getItem('saps_access_token')===null && sessionStorage.getItem('saps_refresh_token')===null")
             assert not browser.errors, 'Uncaught browser exceptions occurred'
-            print('PASS: shared login/MFA, assigned queue/search/empty, note duplicate guard, evidence registration, status success/conflict, protected upload/hash metadata, custody success/conflict, real refresh/expiry/logout, revoked assignment/permission denial, desktop/mobile overflow checks.',flush=True)
+            print('PASS: portal registration/login and shared staff password/email verification, assigned queue/search/empty, note duplicate guard, evidence registration, status success/conflict, protected upload/hash metadata, custody success/conflict, real refresh/expiry/logout, revoked assignment/permission denial, desktop/mobile overflow checks.',flush=True)
             print('PASS: walk-in intake, actual witness statement, acceptance automatically allocates CAS/docket, initial evidence registration.',flush=True)
             print('Screenshots saved to the configured artifact directory.')
             browser.call('Browser.close')
@@ -304,6 +352,8 @@ def check():
             server.should_exit=True
             thread.join(timeout=10)
         settings.evidence_storage_path=original_storage
+        mail.send_code = original_mail
+        settings.email_resend_seconds = original_cooldown
         fixture.close()
         temporary_context.cleanup()
 

@@ -7,13 +7,13 @@ printable confirmations, operational alerts, and dashboard APIs. See
 configuration, default policies, and successful full-suite verification.
 It reuses the existing schema without adding or modifying migrations.
 
-Authentication is now available under `/api/v1/auth`: complainant registration,
-password login, mandatory TOTP enrollment/verification, rotating refresh tokens,
-logout, and current-user/RBAC dependencies. See [Authentication](docs/authentication.md)
-for request flows, secret configuration, security decisions, deployment requirements,
-and testing. Run `.\.venv\Scripts\python.exe -m pytest` for the full suite.
-Revision `089c746ed6a9` adds authentication sessions, encrypted MFA methods, and
-case-insensitive user indexes. The current schema has 32 application tables.
+Authentication under `/api/v1/auth` now uses password plus emailed six-digit
+verification codes, with a protected one-time transition for existing TOTP users.
+See [Authentication](docs/authentication.md) for SMTP configuration, migration,
+security limits, recovery requirements and testing. Apply migration `eabef524c593`
+before starting the updated app. Email verification is not phishing-resistant
+or equivalent to strong authenticator/passkey MFA. Automated tests use fake mail;
+actual inbox delivery must be tested manually after local SMTP configuration.
 
 The completed database foundation is documented in [Database design](docs/database-design.md),
 including all 30 tables, RBAC grants, identifier formats, protections, review findings,

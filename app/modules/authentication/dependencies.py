@@ -32,7 +32,7 @@ def get_current_session(credentials: HTTPAuthorizationCredentials | None = Depen
     if row is None or row.user_id != uuid.UUID(claims['sub']) or row.revoked_at is not None or row.expires_at <= utcnow():
         raise unauthenticated()
     user = repo.user(row.user_id)
-    if user is None or not user.is_active or not user.mfa_enabled or repo.active_mfa(user.id) is None:
+    if user is None or not user.is_active or not user.mfa_enabled or repo.authenticated_method(user) is None:
         raise unauthenticated()
     return row
 
@@ -40,7 +40,7 @@ def get_current_session(credentials: HTTPAuthorizationCredentials | None = Depen
 def get_current_user(session: AuthSession = Depends(get_current_session), db: Session = Depends(get_db)) -> User:
     repo = AuthRepository(db)
     user = repo.user(session.user_id)
-    if user is None or not user.is_active or not user.mfa_enabled or repo.active_mfa(user.id) is None:
+    if user is None or not user.is_active or not user.mfa_enabled or repo.authenticated_method(user) is None:
         raise unauthenticated()
     return user
 

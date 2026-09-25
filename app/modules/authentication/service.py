@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import jwt
-import pyotp
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select, update
@@ -66,7 +65,13 @@ class AuthService:
         return bool(user and user.is_active and (user.locked_until is None or user.locked_until <= security.utcnow()))
 
     def challenge(self, user: User) -> schemas.LoginResponse:
-        purpose = 'mfa_login' if self.repo.active_mfa(user.id) else 'mfa_setup'
+        from app.modules.authentication.email_flow import EmailFlow
+        if not self.repo.active_mfa(user.id):
+            email_method = self.repo.email_method(user)
+            if user.mfa_enabled and email_method is None:
+                raise HTTPException(403, 'Account verification needs administrator-assisted identity recovery.')
+            return EmailFlow(self).send(user, 'login' if email_method else 'register')
+        purpose = 'mfa_login'
         now = security.utcnow()
         row = AuthSession(user_id=user.id, issued_at=now,
             # The random preimage is discarded, never returned. A challenge JWT
@@ -77,7 +82,7 @@ class AuthService:
         self.db.add(row)
         self.db.flush()
         token = security.create_token(user.id, row.id, purpose, timedelta(minutes=settings.mfa_challenge_expire_minutes))
-        return schemas.LoginResponse(status='MFA_REQUIRED' if purpose == 'mfa_login' else 'MFA_SETUP_REQUIRED',
+        return schemas.LoginResponse(status='TOTP_TRANSITION_REQUIRED',
             challenge_token=token, expires_in=settings.mfa_challenge_expire_minutes * 60)
 
     def validate_challenge(self, token: str, purpose: str):
@@ -161,21 +166,22 @@ class AuthService:
         return response
 
     @transactional
-    def setup_mfa(self, token: str) -> schemas.MfaSetupResponse:
-        user, row, _ = self.validate_challenge(token, 'mfa_setup')
-        if self.repo.active_mfa(user.id) or row.last_used_at is not None:
-            self.deny('auth.mfa_failure', user)
-        secret = security.generate_totp_secret()
-        method = UserMfaMethod(user_id=user.id, method_type='TOTP', secret_encrypted=security.encrypt_totp_secret(secret))
-        self.db.add(method)
-        self.db.flush()
-        row.last_used_at = security.utcnow()
-        remaining = row.expires_at - security.utcnow()
-        verification = security.create_token(user.id, row.id, 'mfa_enroll', remaining, method.id)
-        self.audit('auth.mfa_setup', user, row.id)
-        self.db.commit()
-        return schemas.MfaSetupResponse(provisioning_uri=pyotp.TOTP(secret).provisioning_uri(user.email, issuer_name=security.TOTP_ISSUER),
-            manual_entry_secret=secret, setup_token=verification, expires_in=max(0, int(remaining.total_seconds())))
+    def setup_mfa(self, token):
+        raise HTTPException(410, 'Authenticator enrollment has been replaced by email verification. Return to sign-in.')
+
+    @transactional
+    def verify_setup(self, token, code):
+        raise HTTPException(410, 'Authenticator enrollment has been replaced by email verification. Return to sign-in.')
+
+    @transactional
+    def verify_email(self, token, code):
+        from app.modules.authentication.email_flow import EmailFlow
+        return EmailFlow(self).verify(token, code)
+
+    @transactional
+    def resend_email(self, token):
+        from app.modules.authentication.email_flow import EmailFlow
+        return EmailFlow(self).resend(token)
 
     def verify_code(self, user: User, method: UserMfaMethod, code: str):
         now = security.utcnow()
@@ -192,32 +198,16 @@ class AuthService:
         method.last_used_at = datetime.fromtimestamp(step * 30, timezone.utc)
 
     @transactional
-    def verify_setup(self, token: str, code: str) -> schemas.TokenResponse:
-        user, row, claims = self.validate_challenge(token, 'mfa_enroll')
-        method = self.db.scalar(select(UserMfaMethod).where(UserMfaMethod.id == uuid.UUID(claims['mid']),
-            UserMfaMethod.user_id == user.id).with_for_update())
-        if method is None or method.is_active or self.repo.active_mfa(user.id):
-            self.deny('auth.mfa_failure', user)
-        self.verify_code(user, method, code)
-        method.is_active = True
-        method.verified_at = security.utcnow()
-        user.mfa_enabled = True
-        user.last_login_at = security.utcnow()
-        response = self.issue_tokens(user, row)
-        self.audit('auth.mfa_verified', user, row.id)
-        self.db.commit()
-        return response
-
-    @transactional
-    def verify_login(self, token: str, code: str) -> schemas.TokenResponse:
+    def verify_login(self, token: str, code: str) -> schemas.LoginResponse:
+        from app.modules.authentication.email_flow import EmailFlow
         user, row, _ = self.validate_challenge(token, 'mfa_login')
         method = self.repo.active_mfa(user.id)
         if method is None or not user.mfa_enabled:
             self.deny('auth.mfa_failure', user)
         self.verify_code(user, method, code)
-        user.last_login_at = security.utcnow()
-        response = self.issue_tokens(user, row)
-        self.audit('auth.mfa_verified', user, row.id)
+        response = EmailFlow(self).send(user, 'transition')
+        row.revoked_at = security.utcnow()
+        self.audit('auth.email_transition_authorized', user, row.id)
         self.db.commit()
         return response
 
@@ -249,7 +239,7 @@ class AuthService:
                 self.revoke_session_chain(user, row)
                 self.audit('auth.refresh_reuse', user)
             self.deny('auth.session_rejected', user)
-        if not self.eligible(user) or not user.mfa_enabled or not self.repo.active_mfa(user.id):
+        if not self.eligible(user) or not user.mfa_enabled or not self.repo.authenticated_method(user):
             self.deny('auth.session_rejected', user)
         response = self.issue_tokens(user, row)
         self.audit('auth.token_refresh', user, row.id)

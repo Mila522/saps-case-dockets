@@ -20,7 +20,8 @@ from app.modules.access.models import Permission, Role, RolePermission, User, Us
 from app.modules.audit.models import AuditLog
 from app.modules.authentication import schemas, security
 from app.modules.authentication.dependencies import require_permission, require_role
-from app.modules.authentication.models import AuthSession, UserMfaMethod
+from app.modules.authentication.models import AuthSession, UserMfaMethod, EmailChallenge, UserEmailAuth
+from auth_mailbox import code_for
 from app.modules.authentication.service import AuthService
 from app.modules.complainants.models import Complainant
 
@@ -62,14 +63,11 @@ def enroll(client, data=None):
     response = client.post('/api/v1/auth/register', json=data)
     assert response.status_code == 201
     login = response.json()
-    assert login['status'] == 'MFA_SETUP_REQUIRED' and 'access_token' not in login
-    setup = client.post('/api/v1/auth/mfa/setup', json={'challenge_token': login['challenge_token']})
-    assert setup.status_code == 200
-    setup = setup.json()
-    code = pyotp.TOTP(setup['manual_entry_secret']).at(security.utcnow())
-    verified = client.post('/api/v1/auth/mfa/verify-setup', json={'setup_token': setup['setup_token'], 'code': code})
+    assert login['status'] == 'EMAIL_CODE_REQUIRED' and 'access_token' not in login
+    verified = client.post('/api/v1/auth/email/verify', json={'challenge_token': login['challenge_token'], 'code': code_for(data['email'])})
     assert verified.status_code == 200
-    return data, setup, verified.json()
+    return data, login, verified.json()
+
 
 
 def authorization(tokens):
@@ -153,40 +151,36 @@ def test_validation_and_responses_do_not_echo_credentials(auth_context):
     assert client.get('/api/v1/auth/me').status_code == 401
 
 
-def test_mfa_setup_secret_storage_and_single_use(auth_context):
+def test_email_storage_and_single_use(auth_context):
     client, db = auth_context
-    response = client.post('/api/v1/auth/register', json=registration()).json()
-    setup = client.post('/api/v1/auth/mfa/setup', json={'challenge_token': response['challenge_token']}).json()
-    assert setup['provisioning_uri'].startswith('otpauth://totp/')
-    assert client.post('/api/v1/auth/mfa/setup', json={'challenge_token': response['challenge_token']}).status_code == 401
-    method = db.scalar(select(UserMfaMethod).where(UserMfaMethod.secret_encrypted.is_not(None)).order_by(UserMfaMethod.created_at.desc()))
-    assert method.secret_encrypted != setup['manual_entry_secret'] and not method.is_active
-    assert client.post('/api/v1/auth/mfa/verify-setup', json={'setup_token': setup['setup_token'], 'code': 'abcdef'}).status_code == 401
-    payload = {'setup_token': setup['setup_token'], 'code': pyotp.TOTP(setup['manual_entry_secret']).at(security.utcnow())}
-    assert client.post('/api/v1/auth/mfa/verify-setup', json=payload).status_code == 200
-    assert client.post('/api/v1/auth/mfa/verify-setup', json=payload).status_code == 401
+    data = registration()
+    response = client.post('/api/v1/auth/register', json=data).json()
+    code = code_for(data['email'])
+    row = db.get(EmailChallenge, uuid.UUID(security.decode_token(response['challenge_token'], 'email_code')['sid']))
+    assert len(row.code_digest) == 64 and row.code_digest != security.hash_refresh_token(code)
+    assert code not in json.dumps(response)
+    assert client.post('/api/v1/auth/mfa/setup', json={'challenge_token':response['challenge_token']}).status_code == 410
+    payload = {'challenge_token':response['challenge_token'], 'code':'abcdef'}
+    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 401
+    payload['code'] = code
+    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 200
+    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 401
 
 
-def test_login_totp_replay_and_current_user(auth_context):
+def test_login_email_replay_and_current_user(auth_context):
     client, db = auth_context
-    data, setup, tokens = enroll(client)
+    data, _, tokens = enroll(client)
     me = client.get('/api/v1/auth/me', headers=authorization(tokens))
     assert me.status_code == 200
     user = me.json()
-    assert user['mfa_enabled'] and not user['is_verified']  # TOTP does not verify email ownership.
+    assert user['mfa_enabled'] and user['is_verified']
     assert user['complainant_id'] and user['officer_id'] is None
-    assert not {'password_hash', 'failed_login_attempts', 'locked_until', 'secret_encrypted', 'refresh_token_hash'} & set(user)
-    login = client.post('/api/v1/auth/login', json={'username': data['email'].upper(), 'password': data['password']})
-    assert login.status_code == 200 and login.json()['status'] == 'MFA_REQUIRED'
-    assert 'access_token' not in login.json()
-    payload = {'challenge_token': login.json()['challenge_token'],
-               'code': pyotp.TOTP(setup['manual_entry_secret']).at(security.utcnow() + timedelta(seconds=30))}
-    verified = client.post('/api/v1/auth/mfa/verify', json=payload)
-    assert verified.status_code == 200
-    assert client.post('/api/v1/auth/mfa/verify', json=payload).status_code == 401
-    next_login = client.post('/api/v1/auth/login', json={'username': data['username'], 'password': data['password']}).json()
-    payload['challenge_token'] = next_login['challenge_token']
-    assert client.post('/api/v1/auth/mfa/verify', json=payload).status_code == 401
+    assert not {'password_hash','secret_encrypted','refresh_token_hash'} & set(user)
+    login = client.post('/api/v1/auth/login', json={'username':data['email'].upper(),'password':data['password']})
+    assert login.status_code == 200 and login.json()['status'] == 'EMAIL_CODE_REQUIRED'
+    payload = {'challenge_token':login.json()['challenge_token'],'code':code_for(data['email'])}
+    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 200
+    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 401
 
 
 def test_password_lockout_and_generic_failures(auth_context):
@@ -203,7 +197,7 @@ def test_password_lockout_and_generic_failures(auth_context):
     user.locked_until = security.utcnow() - timedelta(seconds=1)
     db.commit()
     good = client.post('/api/v1/auth/login', json={'username': data['username'], 'password': data['password']})
-    assert good.status_code == 200 and good.json()['status'] == 'MFA_SETUP_REQUIRED'
+    assert good.status_code == 200 and good.json()['status'] == 'EMAIL_CODE_REQUIRED'
     assert user.failed_login_attempts == 0
 
 
@@ -213,7 +207,7 @@ def test_mfa_lockout_cannot_be_reset_by_password_success(auth_context):
     for _ in range(settings.max_failed_login_attempts):
         login = client.post('/api/v1/auth/login', json={'username': data['username'], 'password': data['password']})
         assert login.status_code == 200
-        assert client.post('/api/v1/auth/mfa/verify', json={'challenge_token': login.json()['challenge_token'], 'code': 'abcdef'}).status_code == 401
+        assert client.post('/api/v1/auth/email/verify', json={'challenge_token': login.json()['challenge_token'], 'code': 'abcdef'}).status_code == 401
     assert client.post('/api/v1/auth/login', json={'username': data['username'], 'password': data['password']}).status_code == 401
 
 
@@ -275,7 +269,7 @@ def test_audit_sanitization_and_failure_rolls_back_registration(auth_context, mo
     client, db = auth_context
     data, setup, tokens = enroll(client)
     rows = db.scalars(select(AuditLog).where(AuditLog.actor_user_id == uuid.UUID(security.decode_access_token(tokens['access_token'])['sub']))).all()
-    assert {'auth.registration', 'auth.mfa_setup', 'auth.mfa_verified'} <= {r.action for r in rows}
+    assert {'auth.registration', 'auth.email_submitted', 'auth.email_verified'} <= {r.action for r in rows}
     for row in rows:
         assert row.old_values is None and row.new_values is None and row.event_metadata is None
         assert row.user_agent is None
@@ -301,6 +295,8 @@ def test_database_functional_indexes_and_mfa_uniqueness(auth_context):
         with pytest.raises(IntegrityError):
             with db.begin_nested():
                 db.execute(User.__table__.insert().values(**values, password_hash='!'))
+    db.add(UserMfaMethod(user_id=user.id, method_type='TOTP', secret_encrypted='test', is_active=True, verified_at=security.utcnow()))
+    db.flush()
     with pytest.raises(IntegrityError):
         with db.begin_nested():
             db.execute(UserMfaMethod.__table__.insert().values(user_id=user.id, method_type='TOTP',
@@ -319,14 +315,14 @@ def test_challenge_cannot_refresh_and_expired_challenge_is_rejected(auth_context
     client, db = auth_context
     response = client.post('/api/v1/auth/register', json=registration()).json()
     token = response['challenge_token']
-    claims = security.decode_token(token, 'mfa_setup')
+    claims = security.decode_token(token, 'email_code')
     for raw in (token, claims['jti']):
         assert client.post('/api/v1/auth/refresh', json={'refresh_token': raw}).status_code in (401, 422)
     row = db.get(AuthSession, uuid.UUID(claims['sid']))
     row.issued_at = security.utcnow() - timedelta(minutes=10)
     row.expires_at = security.utcnow() - timedelta(minutes=5)
     db.commit()
-    assert client.post('/api/v1/auth/mfa/setup', json={'challenge_token': token}).status_code == 401
+    assert client.post('/api/v1/auth/email/verify', json={'challenge_token': token, 'code':'000000'}).status_code == 401
 
 
 def test_production_requires_https(auth_context, monkeypatch):

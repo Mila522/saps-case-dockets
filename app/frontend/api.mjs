@@ -73,7 +73,15 @@ export function createClient(fetcher = fetch, {storage = null, onExpired = () =>
     if (response.status === 204) return null;
     if (response.ok && options.binary) return response.blob();
     const data = await response.json().catch(() => null);
-    if (!response.ok) throw Object.assign(new Error(errorMessage(response.status, data)), {status: response.status, fields: Array.isArray(data?.detail) ? data.detail : []});
+    if (!response.ok) {
+      // Auth errors are sanitized by the server and distinguish wrong/expired
+      // codes, throttling and uncertain SMTP submission from session expiry.
+      const detail = path.startsWith('/auth/') && path !== '/auth/me' && typeof data?.detail === 'string'
+        ? data.detail : errorMessage(response.status, data);
+      throw Object.assign(new Error(detail), {status: response.status,
+        retryAfter: Math.max(0, Number(response.headers.get('Retry-After')) || 0),
+        fields: Array.isArray(data?.detail) ? data.detail : []});
+    }
     if (data === null) throw new Error('The server returned an unreadable response. Refresh before retrying.');
     return data;
   }

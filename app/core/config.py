@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     max_failed_login_attempts: int = Field(default=5, gt=0)
     account_lock_minutes: int = Field(default=15, gt=0)
     mfa_challenge_expire_minutes: int = Field(default=5, gt=0, le=10)
+    smtp_host: str = Field(default='', repr=False)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_use_starttls: bool = True
+    smtp_username: SecretStr = SecretStr('')
+    smtp_password: SecretStr = SecretStr('')
+    email_from: str = Field(default='', repr=False)
+    email_resend_seconds: int = Field(default=60, ge=60)
+    email_max_sends_per_hour: int = Field(default=10, ge=1, le=30)
     evidence_storage_path: Path = Path(__file__).resolve().parents[2] / '.evidence-storage'
     document_storage_path: Path = Path(__file__).resolve().parents[2] / '.document-storage'
     alert_inactivity_days: int = Field(default=7, ge=1, le=365)

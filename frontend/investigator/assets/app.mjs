@@ -14,7 +14,7 @@ function signIn(message='Sign in with your investigating officer account to see 
   document.querySelector('#identity').textContent='Authorised personnel';
   document.querySelector('#logout').hidden=true;
   view.setAttribute('aria-busy','false');
-  view.innerHTML=`<p class="eyebrow">Investigator workspace</p><h1>Your next step in the investigation.</h1><p class="intro">${escape(message)}</p><div class="panel"><h2>Sign in to your workspace</h2><p>Use the existing staff sign-in and authenticator verification.</p>${link('Sign in securely','/officer/?workspace=investigator')}</div>`;
+  view.innerHTML=`<p class="eyebrow">Investigator workspace</p><h1>Your next step in the investigation.</h1><p class="intro">${escape(message)}</p><div class="panel"><h2>Sign in to your workspace</h2><p>Use the existing staff sign-in with password and email verification.</p>${link('Sign in securely','/officer/?workspace=investigator')}</div>`;
 }
 async function all(path) {
   const rows=[];

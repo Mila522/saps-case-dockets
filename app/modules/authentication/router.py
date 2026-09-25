@@ -25,17 +25,18 @@ def login(data: schemas.LoginRequest, service: AuthService = Depends(get_auth_se
     return service.login(data)
 
 
-@router.post('/mfa/setup', response_model=schemas.MfaSetupResponse)
+@router.post('/mfa/setup', deprecated=True)
 def setup(data: schemas.MfaSetupRequest, service: AuthService = Depends(get_auth_service)):
     return service.setup_mfa(data.challenge_token.get_secret_value())
 
 
-@router.post('/mfa/verify-setup', response_model=schemas.TokenResponse)
+@router.post('/mfa/verify-setup', deprecated=True)
 def verify_setup(data: schemas.MfaSetupVerificationRequest, service: AuthService = Depends(get_auth_service)):
     return service.verify_setup(data.setup_token.get_secret_value(), data.code.get_secret_value())
 
 
-@router.post('/mfa/verify', response_model=schemas.TokenResponse)
+@router.post('/mfa/verify', response_model=schemas.LoginResponse, deprecated=True)
+@router.post('/email/transition', response_model=schemas.LoginResponse)
 def verify_login(data: schemas.MfaLoginVerificationRequest, service: AuthService = Depends(get_auth_service)):
     return service.verify_login(data.challenge_token.get_secret_value(), data.code.get_secret_value())
 
@@ -60,3 +61,13 @@ def current_user(user: User = Depends(get_current_active_user), roles: list[Role
         permissions=[schemas.PermissionSummary.model_validate(permission) for permission in permissions],
         complainant_id=user.complainant.id if user.complainant else None,
         officer_id=user.officer.id if user.officer else None)
+
+
+@router.post('/email/verify', response_model=schemas.TokenResponse)
+def verify_email(data: schemas.MfaLoginVerificationRequest, service: AuthService = Depends(get_auth_service)):
+    return service.verify_email(data.challenge_token.get_secret_value(), data.code.get_secret_value())
+
+
+@router.post('/email/resend', response_model=schemas.LoginResponse)
+def resend_email(data: schemas.MfaSetupRequest, service: AuthService = Depends(get_auth_service)):
+    return service.resend_email(data.challenge_token.get_secret_value())

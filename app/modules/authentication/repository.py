@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.access.models import Permission, Role, RolePermission, User, UserRole
 from app.modules.audit.models import AuditLog
-from app.modules.authentication.models import AuthSession, UserMfaMethod
+from app.modules.authentication.models import AuthSession, UserMfaMethod, UserEmailAuth
 
 
 class AuthRepository:
@@ -33,6 +33,13 @@ class AuthRepository:
     def active_mfa(self, user_id: uuid.UUID) -> UserMfaMethod | None:
         return self.db.scalar(select(UserMfaMethod).where(UserMfaMethod.user_id == user_id,
             UserMfaMethod.method_type == 'TOTP', UserMfaMethod.is_active.is_(True), UserMfaMethod.verified_at.is_not(None)))
+
+    def email_method(self, user):
+        return self.db.scalar(select(UserEmailAuth).where(UserEmailAuth.user_id == user.id,
+            UserEmailAuth.verified_email == user.email)) if user.is_verified else None
+
+    def authenticated_method(self, user):
+        return self.email_method(user) or self.active_mfa(user.id)
 
     def roles(self, user_id: uuid.UUID) -> list[Role]:
         return list(self.db.scalars(select(Role).join(UserRole).where(UserRole.user_id == user_id).order_by(Role.code)))

@@ -1,5 +1,6 @@
 """Collaborator B UI support: station queues, review start and investigator discovery."""
 import uuid
+import pytest
 
 from sqlalchemy import select
 
@@ -71,3 +72,41 @@ def test_commander_docket_queue_and_investigators_are_station_scoped(workflow_co
     ids = {item['id'] for item in investigators.json()}
     assert str(own_investigator.id) in ids
     assert str(foreign_investigator.id) not in ids
+
+
+@pytest.mark.parametrize('role', ['CHARGE_OFFICER', 'STATION_COMMANDER'])
+def test_station_queue_details_and_materials_for_both_roles(workflow_context, role):
+    client,db=workflow_context
+    own_station,foreign_station=station(db,'VISIBLE'),station(db,'HIDDEN')
+    headers,_,_=officer_account(client,db,role,own_station)
+    own=complaint_at_station(client,db,own_station)
+    foreign=complaint_at_station(client,db,foreign_station)
+    response=client.get('/api/v1/complaints/station',headers=headers)
+    assert response.status_code==200
+    assert [row['id'] for row in response.json()['items']]==[str(own.id)]
+    assert response.json()['items'][0]['receiving_station']['name']==own_station.name
+    assert response.json()['items'][0]['incident_location']==own.incident_location
+    assert client.get(f'/api/v1/complaints/{foreign.id}/materials',headers=headers).status_code==404
+    result=client.post(f'/api/v1/complaints/{foreign.id}/review',headers=headers)
+    assert result.status_code in (403,404)
+    result=client.post(f'/api/v1/complaints/{foreign.id}/decisions',headers=headers,json={'decision':'ACCEPTED'})
+    assert result.status_code in (403,404)
+
+
+@pytest.mark.parametrize('role', ['CHARGE_OFFICER', 'STATION_COMMANDER', 'INVESTIGATING_OFFICER'])
+def test_staff_password_requires_email_code_before_workspace_access(workflow_context, role):
+    from app.modules.access.models import User
+    from auth_mailbox import code_for
+    client,db=workflow_context
+    _,user_id,_=officer_account(client,db,role,station(db,'SIGNIN'))
+    user=db.get(User,user_id)
+    login=client.post('/api/v1/auth/login',json={'username':user.username,'password':'Testing-Password12!'})
+    assert login.status_code==200
+    challenge=login.json()
+    assert 'access_token' not in challenge
+    assert client.get('/api/v1/auth/me').status_code==401
+    verified=client.post('/api/v1/auth/email/verify',json={'challenge_token':challenge['challenge_token'],'code':code_for(user.email)})
+    assert verified.status_code==200
+    headers={'Authorization':'Bearer '+verified.json()['access_token']}
+    me=client.get('/api/v1/auth/me',headers=headers).json()
+    assert [item['code'] for item in me['roles']]==[role]

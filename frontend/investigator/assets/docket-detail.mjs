@@ -13,14 +13,14 @@ export async function docketDetail(ctx,id) {
     field('note_type','Note type',{choices:NOTE_TYPES})+field('content','Note',{type:'textarea',max:20000,wide:true,hint:'0 / 20,000 characters. Notes cannot be edited or deleted; append a correction if needed.'})+check('is_sensitive','Mark this note as sensitive'),'Save note'):'';
   const statuses=docket.allowed_next_statuses||[];
   const statusForm=statuses.length?form('status-form','Change docket status',field('status','Next status',{choices:statuses})+
-    field('reason','Reason / closure reason',{type:'textarea',wide:true,max:4000,hint:'Required for every change. When closing, this is the permanent closure reason.'}),'Review status change'):'<p class="muted">No status changes are available for this docket and your permissions.</p>';
+    field('reason','Reason / closure reason',{type:'textarea',wide:true,max:4000,hint:'Required for every change. When closing, this is the permanent closure reason.'}),'Review status change',true):'<p class="muted">No status changes are available for this docket and your permissions.</p>';
   const evidenceForm=open&&ctx.has('evidence.manage')?form('evidence-form','Register evidence',
     field('title','Title',{max:255})+field('evidence_type','Evidence type',{choices:EVIDENCE_TYPES})+check('is_digital','Digital evidence')+
     field('description','Description',{type:'textarea',max:20000,wide:true})+
     field('collected_at','Collection date and time (optional)',{type:'datetime-local',required:false,hint:'Enter your device’s local time.'})+
     field('collection_location','Collection location (optional)',{required:false,max:4000})+field('storage_location','Current storage location',{max:255}),'Register evidence'):'';
   ctx.render(`<div class="page-heading"><div><p class="eyebrow">${e(docket.station_name)} / Docket</p><h1>${e(docket.cas_number)}</h1><p>${badge(docket.status)} <span class="muted">Complaint ${e(docket.complaint_reference)}</span></p></div><div class="actions">${link('Assigned dockets','/investigator/')}<button id="refresh" class="button button-secondary">Refresh docket</button></div></div>
-    <nav class="section-nav" aria-label="Docket sections"><a href="#overview">Overview</a><a href="#notes">Investigation notes</a><a href="#evidence">Evidence</a><a href="#status-history">Status history</a></nav>
+    <nav class="section-nav" aria-label="Docket sections"><a href="#overview">Overview</a><a href="#notes">Investigation notes</a><a href="#evidence">Evidence</a><a href="#status-history">Status history</a>${statuses.length?'<a href="#status-form">Change status</a>':''}</nav>
     ${!open?'<p class="notice success">This docket is read-only. Its recorded history remains available.</p>':''}
     ${section('overview','Docket overview',facts([
       ['Crime category',docket.crime_category],['Station',docket.station_name],['Opened',date(docket.opened_at)],

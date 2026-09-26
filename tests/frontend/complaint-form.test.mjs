@@ -1,3 +1,4 @@
+import {categoryChoices, stationLabel, stationAddress} from '../../app/frontend/complaint-fields.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -7,13 +8,13 @@ const source = readFileSync(new URL('../../app/frontend/app.mjs', import.meta.ur
 const functionSource = source.slice(source.indexOf('async function newComplaint()'), source.indexOf("document.querySelector('#login-tab')"));
 function harness(request) {
   const nodes = [], fields = [], buttons = [];
-  const select = {disabled: false, children: [], replaceChildren() { this.children = []; }};
+  const select = {after(){}, addEventListener(){}, disabled: false, children: [], replaceChildren() { this.children = []; }};
   const submit = {disabled: false, dataset: {}};
   const text = (value, tag='p', parent) => {
     const node = {textContent: value, tag, dataset: {}, setAttribute() {}};
     nodes.push(node); parent?.children?.push(node); return node;
   };
-  const context = vm.createContext({api:{request}, page(){}, text,
+  const context = vm.createContext({api:{request}, page(){}, text, categoryChoices, stationLabel, stationAddress, bindCrimeCategory(){}, document:{createElement:()=>({setAttribute(){}})},
     form(items) { fields.push(...items); return {querySelector: s => s === '[name=station_id]' ? select : submit}; },
     button(label, action) { const b={label, action}; buttons.push(b); return b; }
   });

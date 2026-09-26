@@ -11,7 +11,7 @@ from app.modules.authentication.security import utcnow
 from app.modules.audit.models import AuditLog
 from app.modules.complainants.models import Complainant
 from app.modules.complaints.models import Complaint, ComplaintStatement, Witness, WitnessStatement
-from app.modules.complaints.schemas import ComplaintMaterialOut, StatementOut, WitnessOut
+from app.modules.complaints.schemas import ComplaintMaterialOut, StatementOut, WitnessOut, ReceivingStationOut
 from app.modules.complaints.service import StationComplaintService
 from app.modules.dockets.models import Docket
 from app.modules.evidence.service import EvidenceService
@@ -39,6 +39,15 @@ def atomic(method):
 
 
 class ComplaintIntakeService(StationComplaintService):
+    @atomic
+    def receiving_station(self, user_id):
+        officer = self._officer(user_id, {'CHARGE_OFFICER'})
+        station = self.db.get(Station, officer.station_id)
+        self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
+            action='complaint.intake_station.view', entity_type='station',
+            entity_id=station.id, station_id=station.id))
+        return ReceivingStationOut.model_validate(station)
+
     def audit(self, actor, complaint, action):
         self.db.add(AuditLog(actor_type='USER', actor_user_id=actor, action=action,
             entity_type='complaint', entity_id=complaint.id, station_id=complaint.station_id))
@@ -46,6 +55,8 @@ class ComplaintIntakeService(StationComplaintService):
     @atomic
     def register(self, user_id, data):
         officer = self._officer(user_id, {'CHARGE_OFFICER'})
+        if data.station_id is not None and data.station_id != officer.station_id:
+            raise HTTPException(403, 'Receiving station must match your active officer assignment')
         station = self.db.scalar(select(Station).where(Station.id == officer.station_id,
             Station.is_active.is_(True)).with_for_update(read=True))
         if station is None:
@@ -58,7 +69,7 @@ class ComplaintIntakeService(StationComplaintService):
         person = Complainant(**data.complainant.model_dump(), user_id=None)
         self.db.add(person)
         self.db.flush()
-        complaint = Complaint(**data.model_dump(exclude={'complainant', 'details_confirmed_with_complainant', 'witnesses'}),
+        complaint = Complaint(**data.model_dump(exclude={'station_id', 'complainant', 'details_confirmed_with_complainant', 'witnesses'}),
             complainant_id=person.id, registered_by_officer_id=officer.id, station_id=station.id,
             reference_number=allocate_complaint_reference(self.db, station, now),
             channel='IN_STATION', status='SUBMITTED', submitted_at=now)

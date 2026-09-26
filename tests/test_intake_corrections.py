@@ -58,7 +58,7 @@ def test_review_has_one_route_one_response_and_one_audit(intake):
 
 def test_walk_in_derives_authority_and_preserves_supplied_material(intake):
     client,db,station,charge,officer,outsider,commander=intake
-    data=walk_in(witnesses=[{'first_name':'Actual','last_name':'Witness','statement_text':'Actual witness account'}])
+    data=walk_in(station_id=str(station.id), witnesses=[{'first_name':'Actual','last_name':'Witness','statement_text':'Actual witness account'}])
     response=client.post('/api/v1/complaints/in-station',headers=charge,json=data)
     assert response.status_code==201,response.text
     result=response.json();row=db.get(Complaint,uuid.UUID(result['id']))
@@ -80,7 +80,7 @@ def test_walk_in_derives_authority_and_preserves_supplied_material(intake):
 
 def test_walk_in_rejects_impersonation_unconfirmed_and_inactive_authority(intake):
     client,db,station,charge,officer,_,commander=intake
-    for payload in [walk_in(station_id=str(station.id)),walk_in(registered_by_officer_id=str(officer.id)),
+    for payload in [walk_in(station_id='not-a-uuid'),walk_in(registered_by_officer_id=str(officer.id)),
                     walk_in(complainant_id=str(uuid.uuid4())),walk_in(details_confirmed_with_complainant=False),
                     walk_in(complainant={'first_name':'X','last_name':'Y','phone_number':'1','user_id':str(officer.user_id)})]:
         assert client.post('/api/v1/complaints/in-station',headers=charge,json=payload).status_code==422
@@ -90,6 +90,26 @@ def test_walk_in_rejects_impersonation_unconfirmed_and_inactive_authority(intake
     assert client.post('/api/v1/complaints/in-station',headers=charge,json=walk_in()).status_code==403
     officer.is_active=True;station.is_active=False;db.commit()
     assert client.post('/api/v1/complaints/in-station',headers=charge,json=walk_in()).status_code==403
+
+
+def test_walk_in_selected_station_is_authoritative(intake):
+    client,db,station,charge,officer,outsider,commander=intake
+    path='/api/v1/complaints/in-station/receiving-station'
+    result=client.get(path,headers=charge)
+    assert result.status_code==200 and result.json()['id']==str(station.id)
+    assert client.get(path).status_code==401
+    assert client.get(path,headers=commander).status_code==403
+    other_station=client.get(path,headers=outsider).json()['id']
+    for wrong in [other_station,str(uuid.uuid4())]:
+        assert client.post('/api/v1/complaints/in-station',headers=charge,json=walk_in(station_id=wrong)).status_code==403
+    assert db.scalar(select(Complaint.id).where(Complaint.station_id==station.id)) is None
+    result=client.post('/api/v1/complaints/in-station',headers=charge,json=walk_in(station_id=str(station.id)))
+    assert result.status_code==201
+    assert result.json()['receiving_station']['id']==str(station.id)
+    assert result.json()['incident_location']=='Reported location'
+    station.is_active=False;db.commit()
+    assert client.get(path,headers=charge).status_code==403
+    assert client.post('/api/v1/complaints/in-station',headers=charge,json=walk_in(station_id=str(station.id))).status_code==403
 
 
 @pytest.mark.parametrize('stage',['counter','history','audit','notification'])

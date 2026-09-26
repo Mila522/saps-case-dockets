@@ -35,6 +35,19 @@ from app.modules.authentication import mail
 from test_decisions_dockets import workflow_context, officer_account, complaint_at_station
 
 
+def finish_process(process):
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try: process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try: process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print('Edge cleanup timed out; continuing database rollback.', flush=True)
+
+
 class Browser:
     def __init__(self, websocket):
         self.connection = connect(websocket, max_size=20_000_000)
@@ -118,7 +131,7 @@ def check():
             station = Station(station_code='UI-' + uuid.uuid4().hex[:8], name='Demonstration station', province='Test')
             db.add(station); db.commit()
             charge, _, _ = officer_account(client, db, 'CHARGE_OFFICER', station)
-            commander, _, _ = officer_account(client, db, 'STATION_COMMANDER', station)
+            commander, commander_user_id, _ = officer_account(client, db, 'STATION_COMMANDER', station)
             _, _, destination = officer_account(client, db, 'INVESTIGATING_OFFICER', station)
             credentials = registration()
             assert client.post('/api/v1/auth/register', json=credentials).status_code == 201
@@ -179,6 +192,7 @@ def check():
             assert browser.js("!!document.querySelector('#field-code')")
             browser.fill('#field-code', code_for(citizen['email'])); browser.submit('#view form')
             browser.wait("document.querySelector('#view h2').textContent==='My complaints'")
+            browser.wait("!document.querySelector('#logout').disabled")
             browser.click('#logout')
             browser.wait("!!document.querySelector('#field-username')")
             browser.fill('#field-username', citizen['username']); browser.fill('#field-password', citizen['password'])
@@ -186,11 +200,12 @@ def check():
             browser.wait("!!document.querySelector('#field-code')")
             browser.fill('#field-code', code_for(citizen['email'])); browser.submit('#view form')
             browser.wait("document.querySelector('#view h2').textContent==='My complaints'")
+            browser.wait("!document.querySelector('#logout').disabled")
             browser.click('#logout')
             browser.navigate(base + '/investigator/')
             browser.wait("document.body.innerText.includes('Sign in securely')")
             browser.click('a[href="/officer/?workspace=investigator"]')
-            browser.wait("!!document.querySelector('#identifier')")
+            browser.wait("document.readyState==='complete' && !!document.querySelector('#identifier')")
             browser.fill('#identifier', credentials['username']); browser.fill('#password', credentials['password'])
             browser.submit('#login-form')
             browser.wait("!document.querySelector('#mfa-form').hidden && document.querySelector('#email-guidance').textContent.includes('five minutes')")
@@ -209,6 +224,9 @@ def check():
             browser.fill('#search','no-match'); browser.wait("document.querySelector('#dockets').innerText.includes('No dockets match')")
             browser.click('#clear'); browser.click('#dockets a')
             browser.wait("!!document.querySelector('#note-form')")
+            assert browser.js("document.querySelector('#status-form').parentElement.open")
+            assert browser.js("[...document.querySelector('#status').options].map(o=>o.value)")==['ON_HOLD','CLOSED']
+            assert browser.js("document.querySelector('#reason').required")
             browser.js("document.querySelector('#note-form').parentElement.open=true")
             browser.fill('#content','  Browser verification note  ')
             # Dispatch in one browser task: the first response may replace the
@@ -293,6 +311,10 @@ def check():
             browser.navigate(base+'/officer/')
             browser.wait("!document.querySelector('#app-view').hidden && !document.querySelector('#intake-open').hidden")
             browser.click('#intake-open')
+            browser.wait("!!document.querySelector('#intake-content [name=station_id]') && !document.querySelector('#intake-content [name=station_id]').disabled")
+            assert browser.js("document.querySelector('#intake-content [name=station_id]').value")==str(station.id)
+            assert browser.js("document.querySelector('#intake-content [name=station_id]').options.length")==1
+            assert browser.js("document.querySelector('#intake-content [name=station_id]').required")
             for name,value in [('first_name','Walk'),('last_name','In'),('phone_number','0123456789'),('crime_category','Theft'),
                                ('incident_description','Actual walk-in account'),('incident_location','Test location'),('incident_province','Gauteng')]:
                 browser.fill(f'#intake-content [name={name}]',value)
@@ -333,21 +355,58 @@ def check():
             browser.click('#logout')
             browser.wait("document.querySelector('#notice').textContent==='You have signed out.'")
             assert browser.js("sessionStorage.getItem('saps_access_token')===null && sessionStorage.getItem('saps_refresh_token')===null")
+            # Finish this same walk-in complaint through commander and investigator UIs.
+            def staff_login(user_id):
+                staff=db.get(User,user_id)
+                browser.navigate(base+'/officer/')
+                browser.wait("document.readyState==='complete' && !!document.querySelector('#identifier')")
+                browser.fill('#identifier',staff.username);browser.fill('#password','Testing-Password12!')
+                browser.submit('#login-form');browser.wait("!document.querySelector('#mfa-form').hidden")
+                browser.fill('#mfa-code',code_for(staff.email));browser.submit('#mfa-form')
+
+            staff_login(commander_user_id)
+            browser.wait("!document.querySelector('#app-view').hidden && !!document.querySelector('#complaint-table tr')")
+            assert browser.js("document.querySelector('#complaint-table').innerText.includes('Receiving station: Demonstration station')")
+            assert browser.js("!document.querySelector('[data-complaint-action=start]') && !document.querySelector('[data-complaint-action=decide]')")
+            browser.click('[data-view=dockets]')
+            review_selector=f'[data-docket-action=review][data-id="{accepted["docket_id"]}"]'
+            browser.wait(f'!!document.querySelector({json.dumps(review_selector)})')
+            browser.click(review_selector)
+            browser.click('input[name=docket-decision][value=APPROVED]');browser.submit('#docket-action-form')
+            assign_selector=f'[data-docket-action=assign][data-id="{accepted["docket_id"]}"]'
+            browser.wait(f'!!document.querySelector({json.dumps(assign_selector)})')
+            browser.click(assign_selector);browser.fill('#investigator',str(destination.id))
+            browser.fill('#assignment-reason','Investigate the recorded walk-in complaint')
+            browser.submit('#assignment-form')
+            browser.wait("document.querySelector('#global-message').textContent.includes('assigned')")
+            browser.click('#logout-button');browser.wait("!document.querySelector('#auth-view').hidden")
+            staff_login(destination.user_id)
+            browser.wait("location.pathname==='/investigator/' && !!document.querySelector('#dockets a')")
+            browser.click('#dockets a');browser.wait("!!document.querySelector('#status-form')")
+            browser.js("document.querySelector('#note-form').parentElement.open=true")
+            browser.fill('#content','Follow-up on the walk-in complaint');browser.submit('#note-form')
+            browser.wait("document.querySelector('#notice').textContent==='Investigation note saved.'")
+            for next_status,reason in [('ON_HOLD','Awaiting witness availability'),('ACTIVE','Witness available'),('CLOSED','Investigation concluded')]:
+                browser.fill('#status',next_status);browser.fill('#reason',reason);browser.submit('#status-form')
+                browser.wait("document.querySelector('#confirmation').open");browser.click('#confirmation button[value=confirm]')
+                browser.wait("document.querySelector('#notice').textContent.includes('status updated')")
+                assert browser.js('document.querySelector("#status-history").textContent.includes('+json.dumps(reason)+')')
+            assert browser.js("!document.querySelector('#status-form') && !document.querySelector('#note-form') && !document.querySelector('#evidence-form')")
             assert not browser.errors, 'Uncaught browser exceptions occurred'
             print('PASS: portal registration/login and shared staff password/email verification, assigned queue/search/empty, note duplicate guard, evidence registration, status success/conflict, protected upload/hash metadata, custody success/conflict, real refresh/expiry/logout, revoked assignment/permission denial, desktop/mobile overflow checks.',flush=True)
-            print('PASS: walk-in intake, actual witness statement, acceptance automatically allocates CAS/docket, initial evidence registration.',flush=True)
+            print('PASS: explicit assigned walk-in station, witness statement, automatic CAS/docket, initial evidence, commander email login/approval/assignment, direct investigator staff login, note and ACTIVE/ON_HOLD/CLOSED status history; closed forms absent.',flush=True)
             print('Screenshots saved to the configured artifact directory.')
             browser.call('Browser.close')
             browser.connection.__exit__(None,None,None); browser = None
-            process.wait(timeout=10); process = None
+            finish_process(process)
+            process = None
     finally:
         if browser:
             try: browser.call('Browser.close')
             except Exception: pass
             browser.connection.__exit__(None,None,None)
         if process:
-            try: process.wait(timeout=5)
-            except subprocess.TimeoutExpired: process.terminate(); process.wait(timeout=5)
+            finish_process(process)
         if server:
             server.should_exit=True
             thread.join(timeout=10)

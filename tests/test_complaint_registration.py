@@ -40,7 +40,7 @@ def test_receiving_station_directory_is_authenticated_and_active_only(auth_conte
     assert response.status_code == 200
     rows = {row['id']: row for row in response.json()}
     assert str(active_id) in rows and str(inactive_id) not in rows
-    assert set(rows[str(active_id)]) == {'id', 'name', 'province'}
+    assert set(rows[str(active_id)]) == {'id', 'name', 'province', 'city', 'address_line_1', 'address_line_2'}
     permission = db.scalar(select(Permission.id).where(Permission.code == 'complaint.submit'))
     db.execute(delete(RolePermission).where(RolePermission.permission_id == permission))
     db.commit()

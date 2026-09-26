@@ -1,4 +1,6 @@
 import {mountWalkIn, mountMaterials} from '/portal/case-materials.mjs';
+import {staffWorkspace} from './workspace.mjs';
+import {stationLabel} from '/portal/complaint-fields.mjs';
 const API = '/api/v1';
 const dossierRequest=(path,options={})=>request(path,{...options,...(options.body?{body:JSON.stringify(options.body)}:{})});
 if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
@@ -150,19 +152,12 @@ async function enterApplication() {
   const roles = state.user.roles.map(role => role.code);
   const permissions = new Set(state.user.permissions.map(permission => permission.code));
   $('#intake-open').hidden = !roles.includes('CHARGE_OFFICER') || !permissions.has('complaint.register');
-  // Reuse this login/MFA flow for C; the destination is fixed, never a supplied URL.
-  if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
-    if (roles.includes('INVESTIGATING_OFFICER') && permissions.has('docket.view_assigned')) {
-      location.replace('/investigator/');
-      return;
-    }
-    clearSession();
-    showAuth();
-    showMessage($('#auth-message'), 'An investigating officer account is required for this workspace.');
+  const destination=staffWorkspace(state.user);
+  if(destination==='/investigator/') {
+    location.replace(destination);
     return;
   }
-  const allowedRole = roles.some(role => ['CHARGE_OFFICER', 'STATION_COMMANDER', 'NCC_OFFICER'].includes(role));
-  if (!allowedRole) {
+  if (!destination) {
     clearSession();
     showAuth();
     showMessage($('#auth-message'), 'This workspace is limited to charge officers, station commanders and NCC escalation officers.');
@@ -310,7 +305,10 @@ function renderComplaints() {
   $('#metric-escalated').textContent = counts.ESCALATED;
   $('#complaint-empty').hidden = rows.length !== 0;
   $('#complaint-table').innerHTML = rows.map(row => {
-    const action = row.status === 'SUBMITTED'
+    const canDecide=state.user.roles.some(role=>role.code==='CHARGE_OFFICER') && state.user.permissions.some(permission=>permission.code==='complaint.decide');
+    const action = !canDecide
+      ? `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">View</button>`
+      : row.status === 'SUBMITTED'
       ? `<button class="button button-primary button-small" data-complaint-action="start" data-id="${row.id}">Start review</button>`
       : row.status === 'UNDER_REVIEW'
         ? `<button class="button button-primary button-small" data-complaint-action="decide" data-id="${row.id}">Record decision</button>`
@@ -318,7 +316,7 @@ function renderComplaints() {
           ? `<button class="button button-gold button-small" data-complaint-action="docket" data-id="${row.id}">Create docket</button>`
           : `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">View</button>`;
     return `<tr>
-      <td><span class="reference">${escapeHtml(row.reference_number)}</span><span class="subtext">${escapeHtml(row.channel)}</span></td>
+      <td><span class="reference">${escapeHtml(row.reference_number)}</span><span class="subtext">${escapeHtml(row.channel)}</span><span class="subtext">Receiving station: ${escapeHtml(row.receiving_station?stationLabel(row.receiving_station):row.station_id)}</span></td>
       <td>${escapeHtml(row.crime_category)}<span class="subtext">${escapeHtml(row.incident_city || row.incident_province)}</span></td>
       <td>${escapeHtml(formatDate(row.submitted_at))}</td>
       <td>${statusBadge(row.status)}</td>
@@ -339,6 +337,7 @@ async function loadReasons() {
 
 function complaintSummary(row) {
   return `<div class="summary-item"><span>Reference</span><strong>${escapeHtml(row.reference_number)}</strong></div>
+    <div class="summary-item"><span>Receiving station</span><strong>${escapeHtml(row.receiving_station?stationLabel(row.receiving_station):row.station_id)}</strong></div>
     <div class="summary-item"><span>CAS number</span><strong>${escapeHtml(row.cas_number || 'Not allocated')}</strong></div>
     <div class="summary-item"><span>Status</span><strong>${escapeHtml(label(row.status))}</strong></div>
     <div class="summary-item"><span>Category</span><strong>${escapeHtml(row.crime_category)}</strong></div>

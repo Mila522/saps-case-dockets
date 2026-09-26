@@ -130,6 +130,7 @@ class StationComplaintService:
     def station_out(self, row):
         docket = self.db.scalar(select(Docket).where(Docket.complaint_id == row.id))
         return StationComplaintOut.model_validate(row).model_copy(update={
+            'receiving_station': ReceivingStationOut.model_validate(self.db.get(Station, row.station_id)),
             'docket_id': docket.id if docket else None, 'cas_number': docket.cas_number if docket else None})
 
     def list(self, user_id: uuid.UUID, status: str | None,

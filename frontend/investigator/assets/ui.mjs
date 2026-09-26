@@ -19,7 +19,7 @@ export function table(headers, rows) {
   return `<table class="data-table"><thead><tr>${headers.map(h=>`<th scope="col">${escape(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,i)=>`<td data-label="${escape(headers[i])}">${value}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 export function section(id, title, body) { return `<section class="panel" id="${id}" aria-labelledby="${id}-heading"><h2 id="${id}-heading">${escape(title)}</h2>${body}</section>`; }
-export function form(id, title, fields, submit) { return `<details class="panel"><summary>${escape(title)}</summary><form id="${id}"><div class="form-grid">${fields}</div><div class="actions"><button class="button button-primary" type="submit">${escape(submit)}</button><button class="button button-secondary" type="reset">Reset form</button></div></form></details>`; }
+export function form(id, title, fields, submit, expanded=false) { return `<details class="panel" ${expanded?'open':''}><summary>${escape(title)}</summary><form id="${id}"><div class="form-grid">${fields}</div><div class="actions"><button class="button button-primary" type="submit">${escape(submit)}</button><button class="button button-secondary" type="reset">Reset form</button></div></form></details>`; }
 export function notice(text, success=false) {
   const node = document.querySelector('#notice');
   node.textContent = text; node.hidden = !text; node.classList.toggle('success',success);

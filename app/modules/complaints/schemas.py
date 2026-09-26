@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, EmailStr
 from app.modules.evidence.schemas import EvidenceOut
+from app.modules.complaints.categories import CrimeCategory
 
 
 class ReceivingStationOut(BaseModel):
@@ -12,6 +13,9 @@ class ReceivingStationOut(BaseModel):
     id: uuid.UUID
     name: str
     province: str
+    city: str | None = None
+    address_line_1: str | None = None
+    address_line_2: str | None = None
 
 
 class ComplaintTracking(BaseModel):
@@ -41,6 +45,7 @@ class StationComplaintOut(BaseModel):
     reference_number: str
     status: str
     station_id: uuid.UUID
+    receiving_station: ReceivingStationOut | None = None
     channel: str
     crime_category: str
     incident_description: str
@@ -67,7 +72,7 @@ class ComplaintRegistration(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
     station_id: uuid.UUID
-    crime_category: str = Field(min_length=1, max_length=150)
+    crime_category: CrimeCategory
     incident_description: str = Field(min_length=1, max_length=20000)
     incident_occurred_at: AwareDatetime | None = None
     incident_location: str = Field(min_length=1, max_length=255)
@@ -102,9 +107,10 @@ class WalkInComplainant(BaseModel):
 
 class InStationRegistration(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    station_id: uuid.UUID | None = Field(default=None, description='Selected receiving station; must match the active officer assignment. Legacy clients may omit it to use that assignment.')
     complainant: WalkInComplainant
     details_confirmed_with_complainant: Literal[True]
-    crime_category: str = Field(min_length=1, max_length=150)
+    crime_category: CrimeCategory
     incident_description: str = Field(min_length=1, max_length=20000)
     incident_occurred_at: AwareDatetime | None = None
     incident_location: str = Field(min_length=1, max_length=255)

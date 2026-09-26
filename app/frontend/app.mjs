@@ -1,3 +1,4 @@
+import {categoryChoices, bindCrimeCategory, complaintPayload, stationLabel, stationAddress} from './complaint-fields.mjs';
 import {createClient} from './api.mjs';
 const api = createClient();
 const view = document.querySelector('#view');
@@ -123,10 +124,11 @@ async function newComplaint() {
   page('Submit a complaint');
   const stationStatus = text('Loading receiving stations…');
   stationStatus.setAttribute('role', 'status');
-  const complaintForm = form([['station_id','Receiving station',{tag:'select',choices:[['','Loading stations…']]}],
-    ['crime_category','Crime category',{maxlength:150}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
+  const complaintForm = form([['station_id','Receiving station',{tag:'select',choices:[['','Select a receiving station']]}],
+    ['crime_category','Crime category',{tag:'select',choices:categoryChoices}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
     ['incident_location','Incident location',{maxlength:255}],['incident_city','City (optional)',{optional:true,maxlength:150}],
     ['incident_province','Province',{maxlength:100}],['incident_occurred_at','Incident date and time (optional)',{type:'datetime-local',optional:true,hint:'Enter the time in your device’s local timezone.'}]], 'Submit complaint', async (data, node) => {
+      data = complaintPayload(data);
       if (stationSelect.disabled || !stationSelect.value) throw new Error('Select a receiving station before submitting.');
       for (const key of Object.keys(data)) data[key] = data[key].trim();
       for (const key of ['crime_category','incident_description','incident_location','incident_province']) if (!data[key]) throw new Error('Complete all required fields with more than spaces.');
@@ -136,7 +138,15 @@ async function newComplaint() {
       page('Complaint submitted'); text('Keep your reference number:'); text(result.reference_number,'code');
       text('Status: ' + result.status.replaceAll('_',' ')); button('Track this complaint', () => detail(result.id)); button('My complaints', () => mine());
     });
+  bindCrimeCategory(complaintForm);
   const stationSelect = complaintForm.querySelector('[name=station_id]');
+  const stationDetails = document.createElement('p'); stationDetails.className = 'station-address'; stationDetails.setAttribute('role','status'); stationDetails.hidden = true; stationSelect.after(stationDetails);
+  let loadedStations = [];
+  stationSelect.addEventListener('change', () => {
+    const station = loadedStations.find(item=>item.id===stationSelect.value);
+    stationDetails.hidden = !station;
+    stationDetails.textContent = station ? 'Receiving station address: ' + (stationAddress(station) || 'Address not recorded') : '';
+  });
   const submit = complaintForm.querySelector('[type=submit]');
   const retry = button('Retry loading stations', loadStations);
   async function loadStations() {
@@ -147,11 +157,13 @@ async function newComplaint() {
     stationStatus.textContent = 'Loading receiving stations…';
     try {
       const stations = await api.request('/complaints/receiving-stations');
+      loadedStations = stations;
+      stationDetails.hidden = true;
       stationSelect.replaceChildren();
-      const placeholder = text(stations.length ? 'Select a station' : 'No stations available', 'option', stationSelect);
+      const placeholder = text('Select a receiving station', 'option', stationSelect);
       placeholder.value = '';
       for (const station of stations) {
-        const option = text(`${station.name} · ${station.province}`, 'option', stationSelect);
+        const option = text(stationLabel(station), 'option', stationSelect);
         option.value = station.id;
       }
       stationSelect.disabled = !stations.length;

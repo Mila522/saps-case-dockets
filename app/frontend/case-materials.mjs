@@ -1,3 +1,4 @@
+import {categoryChoices, bindCrimeCategory, complaintPayload, stationLabel, stationAddress} from './complaint-fields.mjs';
 // Shared A/C dossier forms. The caller supplies its existing authenticated client.
 import {escape as e, date} from '/investigator/assets/ui.mjs';
 import {EVIDENCE_TYPES} from '/investigator/assets/contracts.mjs';
@@ -6,12 +7,13 @@ let sequence=0;
 function input(prefix,name,label,{type='text',required=true,max=255,choices}={}) {
   const id=prefix+name;
   const attrs=`id="${id}" name="${name}" ${required?'required':''} maxlength="${max}"`;
-  const control=choices?`<select ${attrs}>${choices.map(value=>`<option value="${e(value)}">${e(value.replaceAll('_',' '))}</option>`).join('')}</select>`:type==='textarea'?`<textarea ${attrs}></textarea>`:`<input ${attrs} type="${type}">`;
+  const control=choices?`<select ${attrs}>${choices.map(value=>`<option value="${e(Array.isArray(value)?value[0]:value)}">${e(Array.isArray(value)?value[1]:value.replaceAll('_',' '))}</option>`).join('')}</select>`:type==='textarea'?`<textarea ${attrs}></textarea>`:`<input ${attrs} type="${type}">`;
   return `<div class="field"><label for="${id}">${e(label)}</label>${control}</div>`;
 }
 function read(form) {
   const values={};
   for(const node of form.querySelectorAll('[name]')) {
+    if(node.disabled) continue;
     const value=node.value.trim();
     if(node.required&&!value) {node.focus();throw new Error('Required fields cannot contain only spaces.');}
     if(value) values[node.name]=value;
@@ -66,9 +68,25 @@ export async function mountMaterials(parent,complaintId,request,{initialEvidence
 
 export function mountWalkIn(parent,request,onCreated) {
   const p='walk-in-'+(++sequence)+'-';
-  parent.innerHTML=`<p>This creates a new walk-in complainant record, without linking or taking over an online account. The receiving station and officer come from your signed-in profile.</p><form class="form-stack">${input(p,'first_name','Complainant first name',{max:100})}${input(p,'last_name','Complainant last name',{max:100})}${input(p,'phone_number','Complainant phone',{type:'tel',max:30})}${input(p,'email','Complainant email (optional)',{type:'email',required:false,max:254})}${input(p,'crime_category','Crime category',{max:150})}${input(p,'incident_description','Complainant statement: what happened?',{type:'textarea',max:20000})}${input(p,'incident_location','Incident location')}${input(p,'incident_city','Incident city (optional)',{required:false,max:150})}${input(p,'incident_province','Incident province',{max:100})}<div class="field"><label for="${p}confirmed"><input id="${p}confirmed" type="checkbox" required> I have confirmed these details with the complainant.</label></div><p>Record actual witnesses after saving. Initial evidence can be registered after acceptance creates the docket. Missing witnesses or evidence must not be invented.</p><button class="button button-primary" type="submit">Register in-station complaint</button></form>`;
+  parent.innerHTML=`<p>This creates a new walk-in complainant record, without linking or taking over an online account. The receiving station and officer come from your signed-in profile.</p><form class="form-stack">${input(p,'first_name','Complainant first name',{max:100})}${input(p,'last_name','Complainant last name',{max:100})}${input(p,'phone_number','Complainant phone',{type:'tel',max:30})}${input(p,'email','Complainant email (optional)',{type:'email',required:false,max:254})}${input(p,'crime_category','Crime category',{choices:categoryChoices})}${input(p,'incident_description','Complainant statement: what happened?',{type:'textarea',max:20000})}${input(p,'incident_location','Incident location')}${input(p,'incident_city','Incident city (optional)',{required:false,max:150})}${input(p,'incident_province','Incident province',{max:100})}<div class="field"><label for="${p}confirmed"><input id="${p}confirmed" type="checkbox" required> I have confirmed these details with the complainant.</label></div><p>Record actual witnesses after saving. Initial evidence can be registered after acceptance creates the docket. Missing witnesses or evidence must not be invented.</p><button class="button button-primary" type="submit">Register in-station complaint</button></form>`;
   const notice=message(parent);
+  const form=parent.querySelector('form');
+  const stationField=document.createElement('div');
+  stationField.innerHTML=input(p,'station_id','Receiving station',{choices:[['','Loading your assigned station…']]})+`<p id="${p}station-address">Only your active assigned station is available.</p>`;
+  form.prepend(stationField);
+  const stationSelect=form.querySelector('[name=station_id]');
+  const submit=form.querySelector('[type=submit]');
+  stationSelect.disabled=true;submit.disabled=true;
+  let ready=false;
+  void request('/complaints/in-station/receiving-station').then(station=>{
+    stationSelect.innerHTML=`<option value="${e(station.id)}">${e(stationLabel(station))}</option>`;
+    stationField.querySelector('p').textContent=`Assigned receiving station: ${stationAddress(station)}`;
+    stationSelect.disabled=false;submit.disabled=false;ready=true;
+  }).catch(error=>{notice.textContent=error.message+' Close and reopen intake to retry.';});
+  bindCrimeCategory(parent.querySelector('form'));
   bind(parent.querySelector('form'),async values=>{
+    if(!ready) throw new Error('Your active receiving station must load before registration.');
+    values = complaintPayload(values);
     const {first_name,last_name,phone_number,email,...incident}=values;
     const result=await request('/complaints/in-station',{method:'POST',body:{...incident,complainant:{first_name,last_name,phone_number,...(email?{email}:{})},details_confirmed_with_complainant:true}});
     await onCreated(result);

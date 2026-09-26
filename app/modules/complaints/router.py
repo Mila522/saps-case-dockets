@@ -50,6 +50,12 @@ def get_intake_service(db: Session = Depends(get_db)):
     return ComplaintIntakeService(db)
 
 
+@router.get('/in-station/receiving-station', response_model=ReceivingStationOut)
+def intake_station(user: User = Depends(require_permission('complaint.register')),
+                   service: ComplaintIntakeService = Depends(get_intake_service)):
+    return service.receiving_station(user.id)
+
+
 @router.post('/in-station', response_model=StationComplaintOut, status_code=201,
              summary='Record a new walk-in complainant and complaint at the actor station')
 def in_station(data: InStationRegistration, user: User = Depends(require_permission('complaint.register')),

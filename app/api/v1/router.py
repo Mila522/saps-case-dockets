@@ -9,7 +9,16 @@ from app.modules.feedback.router import router as feedback_router
 from app.modules.communications.router import router as communications_router
 from app.modules.stations.router import router as stations_router
 
+from app.modules.communications.case_email_api import router as case_email_router
+from app.modules.investigations.contact import router as contact_router
+from app.modules.complaints.intake_email import router as intake_email_router
+from app.modules.administration.router import router as administration_router
+
 router = APIRouter(prefix='/v1')
+router.include_router(administration_router)
+router.include_router(case_email_router)
+router.include_router(contact_router)
+router.include_router(intake_email_router)
 router.include_router(authentication_router)
 router.include_router(complaint_router)
 router.include_router(refusals_router)

@@ -42,7 +42,7 @@ def finish_process(process):
 def check():
     edge = Path(os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')) / 'Microsoft/Edge/Application/msedge.exe'
     if not edge.exists(): raise SystemExit('Microsoft Edge is unavailable; browser checks not run.')
-    with patch.object(mail, 'send_code', send), patch.object(settings, 'email_resend_seconds', 0):
+    with patch.object(mail, 'send_code', send), patch.object(mail, 'send_case_message', return_value=('ACCEPTED', 'SMTP_ACCEPTED')), patch.object(settings, 'email_resend_seconds', 0):
         fixture = workflow_context.__wrapped__()
         client, db = next(fixture)
         browser = process = server = None
@@ -133,6 +133,11 @@ def check():
                 browser.fill('#intake-content [name=crime_category_other]','Old staff category')
                 browser.fill('#intake-content [name=crime_category]','Theft')
                 assert browser.js("document.querySelector('#intake-content [name=crime_category_other]').disabled && document.querySelector('#intake-content [name=crime_category_other]').value===''")
+                for width in (1280,390):
+                    browser.call('Emulation.setDeviceMetricsOverride',{'width':width,'height':850,'deviceScaleFactor':1,'mobile':False})
+                    geometry=browser.js("(()=>{const d=document.querySelector('#intake-dialog'),r=d.getBoundingClientRect();return {left:r.left,right:r.right,viewport:document.documentElement.clientWidth,scroll:d.scrollWidth,client:d.clientWidth,padding:getComputedStyle(d.querySelector('.dialog-shell')).paddingLeft};})()")
+                    assert abs(geometry['left']-(geometry['viewport']-geometry['right']))<3 and geometry['scroll']<=geometry['client']+1 and geometry['padding']!='0px', geometry
+                    assert browser.js("[...document.querySelectorAll('#intake-dialog input,#intake-dialog select,#intake-dialog textarea')].every(n=>n.getBoundingClientRect().right<=document.querySelector('#intake-dialog').getBoundingClientRect().right)")
                 assert not browser.errors
                 print('PASS: email login, database station dropdown/address, explicit selection, independent incident fields, Other validation/switching, API rejection retains form, saved station/category/details, shared staff category form. No real email sent.')
                 browser.call('Browser.close');browser.connection.__exit__(None,None,None);browser=None

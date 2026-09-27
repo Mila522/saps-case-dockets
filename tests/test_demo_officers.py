@@ -137,3 +137,21 @@ def test_unrelated_matching_username_is_not_adopted(workflow_context):
         with db.begin_nested():provision(db,addresses())
     assert db.get(User,user.id).password_hash=='!'
     assert db.scalar(select(Officer.id).where(Officer.user_id==user.id)) is None
+
+
+def test_reset_charge_officer_only_preserves_other_passwords(workflow_context):
+    from app.modules.stations.reset_demo_passwords import reset_passwords
+    client,db=workflow_context
+    seed(db);db.commit()
+    provision(db,addresses());db.commit()
+    before={row.username:row.password_hash for row in db.scalars(select(User).where(
+        User.username.in_([spec[0] for spec in SPECS])))}
+    target=next(spec[0] for spec in SPECS if spec[1]=='CHARGE_OFFICER')
+    results=reset_passwords(db,target);db.commit()
+    assert len(results)==1 and results[0].username==target
+    for user in db.scalars(select(User).where(User.username.in_(before))):
+        if user.username==target:
+            assert user.password_hash!=before[user.username]
+            assert verify_password(results[0].temporary_password.get_secret_value(),user.password_hash)
+        else:
+            assert user.password_hash==before[user.username]

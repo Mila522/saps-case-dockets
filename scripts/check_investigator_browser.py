@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.modules.access.models import User, Role, UserRole
 from app.modules.stations.models import Station, Officer
+from app.modules.refusals.models import RefusalReason
 from test_authentication import registration
 from auth_mailbox import send, code_for
 from app.modules.authentication import mail
@@ -112,6 +113,8 @@ def check():
     if not edge.exists():
         raise SystemExit('Microsoft Edge is required for this optional browser check.')
     original_mail, original_cooldown = mail.send_code, settings.email_resend_seconds
+    original_case_mail = mail.send_case_message
+    mail.send_case_message = lambda *args, **kwargs: ('ACCEPTED', 'SMTP_ACCEPTED')
     def slow_fake_mail(recipient, code):
         time.sleep(.5)  # Keep pending UI observable; no SMTP connection.
         send(recipient, code)
@@ -132,6 +135,7 @@ def check():
             db.add(station); db.commit()
             charge, _, _ = officer_account(client, db, 'CHARGE_OFFICER', station)
             commander, commander_user_id, _ = officer_account(client, db, 'STATION_COMMANDER', station)
+            _, admin_user_id, _ = officer_account(client, db, 'SYSTEM_ADMINISTRATOR', station)
             _, _, destination = officer_account(client, db, 'INVESTIGATING_OFFICER', station)
             credentials = registration()
             assert client.post('/api/v1/auth/register', json=credentials).status_code == 201
@@ -147,6 +151,13 @@ def check():
             docket_id = docket['id']
             assert client.post(f'/api/v1/dockets/{docket_id}/approvals', headers=commander, json={'decision':'APPROVED'}).status_code == 201
             assert client.post(f'/api/v1/dockets/{docket_id}/assignments', headers=commander, json={'investigating_officer_id':str(officer.id),'reason':'Browser demonstration'}).status_code == 201
+            refused = complaint_at_station(client, db, station)
+            refusal_reason = db.scalar(select(RefusalReason).where(RefusalReason.code == 'SUSPECT_UNKNOWN'))
+            assert client.post(f'/api/v1/complaints/{refused.id}/decisions', headers=charge, json={'decision':'REFUSED','refusal_reason_id':str(refusal_reason.id)}).status_code == 201
+            escalation_id = next(row['id'] for row in client.get('/api/v1/refusal-escalations', headers=commander).json() if row['complaint_id'] == str(refused.id))
+            ordinary_refusal = complaint_at_station(client, db, station)
+            ordinary_reason = db.scalar(select(RefusalReason).where(RefusalReason.code == 'DUPLICATE_COMPLAINT'))
+            assert client.post(f'/api/v1/complaints/{ordinary_refusal.id}/decisions', headers=charge, json={'decision':'REFUSED','refusal_reason_id':str(ordinary_reason.id),'officer_notes':'Duplicate complaint checked'}).status_code == 201
             db.execute(text('SET LOCAL ROLE saps_api')); db.commit()
             # Serialize the rollback fixture's shared connection across HTTP threads.
             lock = threading.Lock()
@@ -224,6 +235,13 @@ def check():
             browser.fill('#search','no-match'); browser.wait("document.querySelector('#dockets').innerText.includes('No dockets match')")
             browser.click('#clear'); browser.click('#dockets a')
             browser.wait("!!document.querySelector('#note-form')")
+            assert browser.js("!!document.querySelector('#complainant-contact') && !!document.querySelector('#invitation-form')")
+            assert browser.js("document.querySelector('#invitation-form').parentElement.open && !!document.querySelector('a[href=\"#complainant-contact\"]')")
+            browser.fill('#starts_at','2099-01-15T10:30')
+            browser.submit('#invitation-form')
+            browser.wait("document.querySelector('#confirmation').open")
+            browser.click('#confirmation button[value=confirm]')
+            browser.wait("document.querySelector('#notice').textContent.includes('Invitation recorded')")
             assert browser.js("document.querySelector('#status-form').parentElement.open")
             assert browser.js("[...document.querySelector('#status').options].map(o=>o.value)")==['ON_HOLD','CLOSED']
             assert browser.js("document.querySelector('#reason').required")
@@ -368,6 +386,28 @@ def check():
             browser.wait("!document.querySelector('#app-view').hidden && !!document.querySelector('#complaint-table tr')")
             assert browser.js("document.querySelector('#complaint-table').innerText.includes('Receiving station: Demonstration station')")
             assert browser.js("!document.querySelector('[data-complaint-action=start]') && !document.querySelector('[data-complaint-action=decide]')")
+            browser.click(f'[data-complaint-action=view][data-id="{ordinary_refusal.id}"]')
+            browser.wait("!!document.querySelector('[data-review-action=ACKNOWLEDGE]')")
+            browser.click('[data-review-action=ACKNOWLEDGE]')
+            browser.wait("document.querySelector('#commander-refusal-review').textContent.includes('Refusal acknowledged.')")
+            browser.click('[data-review-action=ESCALATE]')
+            assert browser.js("!document.querySelector('#commander-escalation-reason').validity.valid")
+            browser.fill('#commander-escalation-reason','NCC review requested by commander')
+            browser.click('[data-review-action=ESCALATE]')
+            browser.wait("document.querySelector('#commander-refusal-review').textContent.includes('Refusal escalated to NCC.')")
+            assert browser.js("!document.querySelector('[data-review-action=ESCALATE]')")
+            browser.click('#complaint-dialog .dialog-close')
+            browser.click('[data-view=escalations]')
+            acknowledge_selector=f'[data-escalation-action=acknowledge][data-id="{escalation_id}"]'
+            resolve_selector=f'[data-escalation-action=resolve][data-id="{escalation_id}"]'
+            browser.wait(f'!!document.querySelector({json.dumps(acknowledge_selector)})')
+            browser.click(acknowledge_selector)
+            browser.wait(f'!document.querySelector({json.dumps(acknowledge_selector)})')
+            browser.click(resolve_selector)
+            browser.fill('#resolution-notes','Commander browser verification')
+            browser.submit('#resolve-form')
+            browser.wait(f'!document.querySelector({json.dumps(resolve_selector)})')
+            assert browser.js("document.querySelector('#escalation-list').textContent.includes('This escalation is resolved.')")
             browser.click('[data-view=dockets]')
             review_selector=f'[data-docket-action=review][data-id="{accepted["docket_id"]}"]'
             browser.wait(f'!!document.querySelector({json.dumps(review_selector)})')
@@ -393,6 +433,25 @@ def check():
                 assert browser.js('document.querySelector("#status-history").textContent.includes('+json.dumps(reason)+')')
             assert browser.js("!document.querySelector('#status-form') && !document.querySelector('#note-form') && !document.querySelector('#evidence-form')")
             assert not browser.errors, 'Uncaught browser exceptions occurred'
+            browser.click('#logout')
+            staff_login(admin_user_id)
+            browser.wait("location.pathname==='/admin/' && !document.querySelector('#workspace').hidden")
+            browser.click('#create-staff')
+            admin_staff_name='browser_staff_'+uuid.uuid4().hex
+            for key,value in {'username':admin_staff_name,'email':admin_staff_name+'@example.com','password':'Testing-Password12!',
+                'role':'CHARGE_OFFICER','station_id':str(station.id),'service_number':'B-'+uuid.uuid4().hex,'rank':'Officer'}.items():
+                browser.fill('#staff-form [name='+key+']',value)
+            browser.submit('#staff-form')
+            browser.wait("document.querySelector('#notice').textContent.includes('Staff account created')")
+            browser.fill('#user-filters [name=q]',admin_staff_name);browser.submit('#user-filters')
+            browser.wait("!!document.querySelector('[data-edit]') && document.querySelector('#user-count').textContent.startsWith('1 accounts')")
+            browser.click('[data-edit]');browser.fill('#staff-form [name=is_active]','false');browser.submit('#staff-form')
+            browser.wait("document.querySelector('#notice').textContent.includes('Staff account updated')")
+            browser.click('#audit-tab');browser.wait("!!document.querySelector('[data-audit]')")
+            browser.click('[data-audit]');browser.wait("!document.querySelector('#audit-detail').hidden")
+            assert browser.js("document.querySelector('#audit-detail').textContent.includes('Sensitive case contents')")
+            assert not browser.errors
+            print('PASS: administrator shared email-code sign-in, staff create/search/deactivate and read-only audit detail; mocked email and rollback-only records.',flush=True)
             print('PASS: portal registration/login and shared staff password/email verification, assigned queue/search/empty, note duplicate guard, evidence registration, status success/conflict, protected upload/hash metadata, custody success/conflict, real refresh/expiry/logout, revoked assignment/permission denial, desktop/mobile overflow checks.',flush=True)
             print('PASS: explicit assigned walk-in station, witness statement, automatic CAS/docket, initial evidence, commander email login/approval/assignment, direct investigator staff login, note and ACTIVE/ON_HOLD/CLOSED status history; closed forms absent.',flush=True)
             print('Screenshots saved to the configured artifact directory.')
@@ -412,6 +471,7 @@ def check():
             thread.join(timeout=10)
         settings.evidence_storage_path=original_storage
         mail.send_code = original_mail
+        mail.send_case_message = original_case_mail
         settings.email_resend_seconds = original_cooldown
         fixture.close()
         temporary_context.cleanup()

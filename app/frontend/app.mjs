@@ -1,5 +1,8 @@
 import {categoryChoices, bindCrimeCategory, complaintPayload, stationLabel, stationAddress} from './complaint-fields.mjs';
 import {createClient} from './api.mjs';
+import {mountEmailStatus} from './case-email-ui.mjs';
+import {complaintFromHash} from './case-link.mjs';
+let linkedComplaint = complaintFromHash(window.location.hash);
 const api = createClient();
 const view = document.querySelector('#view');
 const message = document.querySelector('#message');
@@ -61,7 +64,12 @@ async function mfa(challenge) {
     try {
       const result = await post(transition ? '/auth/email/transition' : '/auth/email/verify', {challenge_token:challenge.challenge_token,code:data.code});
       if (transition) return mfa(result);
-      api.setTokens(result); session(true); page('Signed in'); await mine();
+      api.setTokens(result); session(true); page('Signed in');
+      if (linkedComplaint) {
+        const id = linkedComplaint; linkedComplaint = null;
+        window.history.replaceState(null, '', window.location.pathname);
+        await detail(id); // The normal endpoint enforces the verified user's ownership.
+      } else await mine();
     } catch(error) { note(error.message); } // Preserve the code form and challenge on failure.
     finally { submit.textContent = 'Verify and sign in'; }
   });
@@ -96,6 +104,8 @@ async function mine(offset = 0) {
   page('My complaints'); text('Loading complaints…');
   const data = await api.request(`/complaints/mine?limit=10&offset=${offset}`);
   page('My complaints');
+  const emailPanel=document.createElement('section');view.append(emailPanel);
+  void mountEmailStatus(emailPanel,(path,options)=>api.request(path,options));
   form([['reference_number','Track one of your complaint references',{maxlength:100}]], 'Track reference', async data=>{
     const item=await post('/complaints/track-by-reference',{reference_number:data.reference_number.trim()});
     await detail(item.id);
@@ -118,6 +128,14 @@ async function detail(id) {
   page('Complaint details'); const list = document.createElement('dl'); view.append(list);
   for (const [label, value] of [['Reference',item.reference_number],['CAS number',item.cas_number || 'Not allocated'],['Status',item.status.replaceAll('_',' ')],['Submitted',date(item.submitted_at)],['Review started',date(item.review_started_at)],['Last updated',date(item.updated_at)]]) { text(label,'dt',list); text(value,'dd',list); }
   button('Refresh status', () => detail(id)); button('Back to my complaints', () => mine());
+  const updates = await api.request(`/complaints/${encodeURIComponent(id)}/updates`);
+  if (updates.docket_status) text('Case status: ' + updates.docket_status.replaceAll('_',' '));
+  text('Official updates and appointments', 'h3');
+  for (const update of updates.feedback) {
+    const article=document.createElement('article'); view.append(article);
+    text(update.subject,'h4',article);text(update.message,'p',article);text(date(update.published_at),'small',article);
+  }
+  if (!updates.feedback.length) text('No official updates published yet.');
 }
 function date(value) { return value ? new Date(value).toLocaleString() : 'Not started'; }
 async function newComplaint() {
@@ -183,4 +201,6 @@ document.querySelector('#register-tab').onclick = () => run(async () => register
 document.querySelector('#mine-tab').onclick = () => run(() => mine());
 document.querySelector('#new-tab').onclick = () => run(newComplaint);
 document.querySelector('#logout').onclick = () => run(async () => { try { await api.logout(); note('You have signed out.'); } finally { session(false); login(); } });
-session(false); login();
+session(false);
+if (!linkedComplaint && new URLSearchParams(window.location.search).get('page') === 'register') register();
+else login();

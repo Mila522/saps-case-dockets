@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     account_lock_minutes: int = Field(default=15, gt=0)
     mfa_challenge_expire_minutes: int = Field(default=5, gt=0, le=10)
     smtp_host: str = Field(default='', repr=False)
+    case_portal_url: str = 'http://127.0.0.1:8000/portal/'
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_use_starttls: bool = True
     smtp_username: SecretStr = SecretStr('')

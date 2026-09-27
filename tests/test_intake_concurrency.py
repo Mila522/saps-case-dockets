@@ -78,7 +78,11 @@ def assert_single_acceptance(engine,station,complaint):
         assert db.scalar(select(IdentifierCounter.last_value).where(IdentifierCounter.station_id==station,IdentifierCounter.counter_type=='CAS'))==1
         assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.entity_id==docket.id,AuditLog.action=='docket.create'))==1
         assert set(db.scalars(select(Notification.event_type).where(Notification.complaint_id==complaint)))=={'complaint.accepted','docket.created'}
-        assert db.scalar(select(func.count()).select_from(Notification).where(Notification.complaint_id==complaint))==2
+        assert db.scalar(select(func.count()).select_from(Notification).where(
+            Notification.complaint_id==complaint, Notification.channel=='IN_APP'))==2
+        assert db.scalar(select(func.count()).select_from(Notification).where(
+            Notification.complaint_id==complaint, Notification.channel=='EMAIL',
+            Notification.event_type=='docket.created'))==1
 
 
 def test_two_acceptances_create_one_docket_and_one_cas(race_database):

@@ -29,6 +29,9 @@ def notify_complainant(db, complaint, event_type, *, docket_id=None, actor_user_
     db.add(AuditLog(actor_type='USER' if actor_user_id else 'SYSTEM', actor_user_id=actor_user_id,
         action='notification.delivered', entity_type='notification', entity_id=row.id,
         station_id=complaint.station_id))
+    if event_type in {'complaint.registered', 'docket.created'}:
+        from app.modules.communications.case_email import enqueue
+        enqueue(db, complaint, docket_id, event_type, docket_id if event_type == 'docket.created' else complaint.id)
     return row
 
 

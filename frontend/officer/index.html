@@ -6,7 +6,7 @@
   <meta name="description" content="SAPS complaint and docket work queue for charge officers and station commanders.">
   <title>SAPS Case Desk</title>
   <link rel="stylesheet" href="assets/styles.css">
-  <script type="module" src="assets/app.js"></script>
+  <script type="module" src="assets/app.js?v=admin-routing-2"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -223,7 +223,7 @@
       <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Assign officer</button></div>
     </form>
   </dialog>
-<dialog id="intake-dialog" aria-labelledby="intake-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="intake-title">In-station complaint intake</h2><div id="intake-content"></div></dialog>
-<dialog id="materials-dialog" aria-labelledby="materials-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="materials-title">Docket statements and witnesses</h2><div id="materials-content"></div></dialog>
+<dialog id="intake-dialog" aria-labelledby="intake-title"><div class="dialog-shell"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="intake-title">In-station complaint intake</h2><div id="intake-content"></div></div></dialog>
+<dialog id="materials-dialog" aria-labelledby="materials-title"><div class="dialog-shell"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="materials-title">Docket statements and witnesses</h2><div id="materials-content"></div></div></dialog>
 </body>
 </html>

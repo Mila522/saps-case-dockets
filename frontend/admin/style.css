@@ -1,0 +1,31 @@
+.admin-shell{max-width:1280px;margin:auto;padding:32px 24px}label{display:grid;gap:8px;min-width:0}input,select{width:100%;min-width:0}.filters{align-items:end}form{margin:20px 0}.table-wrap{overflow:auto}td{overflow-wrap:anywhere}#editor,#audit-detail{margin-top:24px}pre{white-space:pre-wrap;overflow-wrap:anywhere}.actions{flex-wrap:wrap}[hidden]{display:none!important}@media(max-width:600px){.admin-shell{padding:18px}.form-grid,.filters{display:grid;grid-template-columns:1fr}}
+
+/* Use the same shared navy, gold and form foundations as the staff workspaces. */
+body{background:#edf2f6}
+.admin-shell>.page-heading{background:linear-gradient(120deg,var(--navy-950),var(--navy-800));border-top:5px solid var(--gold-400);border-radius:14px;padding:32px;box-shadow:var(--shadow);color:#fff}
+.admin-shell>.page-heading h1{color:#fff}
+.admin-shell>.page-heading .eyebrow{color:#e5c988}
+#identity{color:#d8e3ec;margin-bottom:0}
+#logout{background:transparent;color:#fff;border-color:#8ba0b1}
+#logout:hover{background:#24455f}
+.section-nav{background:var(--navy-900);border-radius:10px;padding:10px;gap:10px;border:0;box-shadow:var(--shadow)}
+.section-nav .button{background:transparent;border-color:transparent;color:#e1e9f0}
+.section-nav .button:hover{background:#24455f;color:#fff}
+#workspace:has(#users-panel:not([hidden])) #users-tab,
+#workspace:has(#audit-panel:not([hidden])) #audit-tab{background:var(--gold-400);color:var(--navy-950);font-weight:750}
+#users-panel,#audit-panel{background:#fff;padding:28px;border:1px solid var(--grey-200);border-top:4px solid var(--gold-500);border-radius:12px;margin-top:24px;box-shadow:var(--shadow);min-width:0}
+#user-filters,#audit-filters{background:#f0f5f9;border:1px solid #d9e4ec;border-radius:10px;padding:20px}
+label{color:var(--navy-900);font-size:.88rem;font-weight:600}
+input,select{padding:11px 12px;border:1px solid #899eaf;border-radius:6px;background:#fff;color:var(--ink)}
+.admin-shell table{width:100%;border-collapse:collapse;font-size:.9rem}
+.admin-shell th{background:var(--navy-800);color:#fff;text-align:left;padding:15px;font-size:.76rem;letter-spacing:.04em;text-transform:uppercase}
+.admin-shell td{padding:17px 15px;border-bottom:1px solid #dee7ee;vertical-align:top}
+.admin-shell tbody tr:nth-child(even){background:#f4f7fa}
+.admin-shell tbody tr:hover{background:#edf3f8}
+.table-wrap{border:1px solid var(--grey-200);border-radius:8px}
+.admin-shell td small{color:#526575}
+#user-count,#audit-count{color:#536575;font-size:.88rem}
+#editor,#audit-detail{border-top:4px solid var(--gold-500);background:#f8fafc}
+#notice{background:var(--blue-bg);color:#173e59;border-left:4px solid var(--blue);padding:16px 20px;border-radius:6px;overflow-wrap:anywhere}
+.admin-shell .button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:600px){.admin-shell>.page-heading{padding:24px 20px}.admin-shell>.page-heading h1{font-size:2rem}#users-panel,#audit-panel{padding:18px}#user-filters,#audit-filters{padding:14px}.admin-shell th,.admin-shell td{padding:12px}.admin-shell table{min-width:620px}}

@@ -113,7 +113,8 @@ return to sign-in and retry after the cooldown. If SMTP accepted but the databas
 commit failed, the unusable message may still arrive; sign in again for a new code.
 Never log SMTP exceptions, message bodies, passwords, codes, tokens or credentials.
 
-Authentication mail is separate from D's case notifications. D's backend, SMS,
+Authentication mail is separate from case-update mail, which reuses the SMTP
+configuration through a separate outbox (see `case-email-tracking.md`). Existing
 confirmations, alerts and dashboards are not redesigned or represented as complete.
 Audit events contain fixed action names and user/session IDs only. Existing password
 hashing, lockouts, generic password failures, sanitized validation errors, HTTPS
@@ -191,3 +192,14 @@ full browser rerun was not completed: the queue-refresh test selector was
 corrected, but permission for the final Edge rerun was declined. A dossier-loading
 race was also fixed by binding investigator forms before loading that panel.
 `git diff --check` passed. No additional real email was sent during this follow-up.
+
+### Local SMTP troubleshooting
+
+Run `python -m app.modules.authentication.check_smtp` in the same environment as
+the server. This checks connectivity, STARTTLS and authentication without sending
+mail or printing credentials. A confirmed local PermissionError 10013 occurred
+inside the execution sandbox; the same configured server authenticated outside
+it. Start the application from an unrestricted local terminal. This is not an MFA
+configuration problem and must not be worked around by disabling verification.
+A successful SMTP DATA response remains accepted if connection shutdown fails;
+unconfirmed sends revoke their codes. Failed staff resends return to sign-in.

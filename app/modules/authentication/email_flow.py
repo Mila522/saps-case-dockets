@@ -61,7 +61,9 @@ class EmailFlow:
             # Preserve rate limits and the pending account even for ambiguous SMTP failure.
             self.db.commit()
             raise HTTPException(503, 'Email submission could not be confirmed. Any code from this attempt is invalid. '
-                'Return to sign-in and retry after one minute; verification is still required.') from None
+                'Return to sign-in and retry after one minute; verification is still required. '
+                'If this continues, ask the administrator to check SMTP connectivity and configuration.',
+                headers={'Retry-After': str(max(60, settings.email_resend_seconds))}) from None
         record.delivery_state = 'accepted'
         self.auth.audit('auth.email_submitted', user, row.id)
         return schemas.LoginResponse(status='EMAIL_CODE_REQUIRED',

@@ -1,6 +1,8 @@
 import {mountWalkIn, mountMaterials} from '/portal/case-materials.mjs';
-import {staffWorkspace} from './workspace.mjs';
+import {staffWorkspace} from './workspace.mjs?v=admin-routing-2';
 import {stationLabel} from '/portal/complaint-fields.mjs';
+import {mountEmailStatus} from '/portal/case-email-ui.mjs';
+import {mountRefusalReview} from './refusal-review.mjs';
 const API = '/api/v1';
 const dossierRequest=(path,options={})=>request(path,{...options,...(options.body?{body:JSON.stringify(options.body)}:{})});
 if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
@@ -153,14 +155,14 @@ async function enterApplication() {
   const permissions = new Set(state.user.permissions.map(permission => permission.code));
   $('#intake-open').hidden = !roles.includes('CHARGE_OFFICER') || !permissions.has('complaint.register');
   const destination=staffWorkspace(state.user);
-  if(destination==='/investigator/') {
+  if(destination==='/investigator/' || destination==='/admin/') {
     location.replace(destination);
     return;
   }
   if (!destination) {
     clearSession();
     showAuth();
-    showMessage($('#auth-message'), 'This workspace is limited to charge officers, station commanders and NCC escalation officers.');
+    showMessage($('#auth-message'), 'Staff access requires an authorized charge officer, station commander, investigating officer, NCC officer or system administrator role and its workspace permissions.');
     return;
   }
   $('#auth-view').hidden = true;
@@ -260,7 +262,10 @@ $('#resend-code').addEventListener('click', async () => {
     showMessage($('#auth-message'), 'A new code was submitted. Check your inbox or spam folder and use the newest code.', true);
   } catch(error) {
     if (error.retryAfter) state.resendReadyAt = Date.now() + error.retryAfter * 1000;
-    if (error.status === 401 || error.status === 503) state.resendUnavailable = true;
+    if (error.status === 401 || error.status === 503) {
+      $('#mfa-code').value = '';
+      setAuthStep('login'); // A failed resend revoked this challenge; do not offer verification.
+    }
     showMessage($('#auth-message'), error.message);
   } finally { state.authBusy = false; updateVerificationButtons(); }
 });
@@ -307,7 +312,7 @@ function renderComplaints() {
   $('#complaint-table').innerHTML = rows.map(row => {
     const canDecide=state.user.roles.some(role=>role.code==='CHARGE_OFFICER') && state.user.permissions.some(permission=>permission.code==='complaint.decide');
     const action = !canDecide
-      ? `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">View</button>`
+      ? `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">${state.user.roles.some(role=>role.code==='STATION_COMMANDER') && ['REFUSED','ESCALATED'].includes(row.status)?'Review refusal':'View'}</button>`
       : row.status === 'SUBMITTED'
       ? `<button class="button button-primary button-small" data-complaint-action="start" data-id="${row.id}">Start review</button>`
       : row.status === 'UNDER_REVIEW'
@@ -349,6 +354,15 @@ function complaintSummary(row) {
 function openComplaintDialog(row, readOnly = false) {
   state.activeComplaint = row;
   $('#complaint-summary').innerHTML = complaintSummary(row);
+  if(state.user.roles.some(role=>role.code==='STATION_COMMANDER') && ['REFUSED','ESCALATED'].includes(row.status)) {
+    const reviewPanel=document.createElement('section');reviewPanel.id='commander-refusal-review';
+    $('#complaint-summary').append(reviewPanel);
+    void mountRefusalReview(reviewPanel,dossierRequest,row.id,async()=>{await Promise.all([loadComplaints(),loadEscalations()]);});
+  }
+  if(state.user.roles.some(role=>['CHARGE_OFFICER','STATION_COMMANDER'].includes(role.code))) {
+    const emailPanel=document.createElement('section');$('#complaint-summary').append(emailPanel);
+    void mountEmailStatus(emailPanel,dossierRequest,row.id);
+  }
   $('#complaint-dialog-title').textContent = readOnly ? 'Complaint details' : 'Record complaint decision';
   $('#decision-choice').hidden = readOnly;
   $('#refusal-fields').hidden = true;
@@ -450,7 +464,7 @@ function renderEscalations() {
     const actions = row.status === 'OPEN'
       ? `<button class="button button-secondary button-small" data-escalation-action="acknowledge" data-id="${row.id}">Acknowledge</button><button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>`
       : row.status === 'ACKNOWLEDGED'
-        ? `<button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>` : '';
+        ? `<span class="muted">Already acknowledged.</span><button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>` : '<p class="muted">This escalation is resolved. No further acknowledgement or resolution is needed.</p>';
     return `<article class="escalation-card">
       <div><h3>Complaint ${escapeHtml(row.complaint_id)}</h3><div class="escalation-meta"><span>${statusBadge(row.status)}</span><span>${escapeHtml(label(row.target))}</span><span>Escalated ${escapeHtml(formatDate(row.escalated_at))}</span></div>${row.resolution_notes ? `<p>${escapeHtml(row.resolution_notes)}</p>` : ''}</div>
       <div class="actions">${actions}</div>
@@ -613,10 +627,10 @@ async function submitAssignment(event) {
 
 function bindEvents() {
   $('#intake-open').onclick=()=>{
-    mountWalkIn($('#intake-content'),dossierRequest,async row=>{
+    mountWalkIn($('#intake-content'),dossierRequest,async (row,linked)=>{
       $('#intake-dialog').close();
       await loadComplaints();
-      globalMessage(`In-station complaint registered: ${row.reference_number}`,true);
+      globalMessage(`In-station complaint registered: ${row.reference_number}. ${linked?'Email updates are queued for the verified account.':'Email updates were not sent: the walk-in email is unverified.'}`,true);
     });
     $('#intake-dialog').showModal();
   };

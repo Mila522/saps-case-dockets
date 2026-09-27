@@ -13,6 +13,8 @@ from app.modules.alerts import models as alert_models
 from app.modules.audit import models as audit_models
 from app.modules.system import models as system_models
 from app.modules.authentication import models as authentication_models
+from app.modules.communications import historical_sms_models, email_models
+from app.modules.complaints import intake_email_models
 
 __all__ = [
     "access_models", "station_models", "complainant_models", "complaint_models",

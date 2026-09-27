@@ -64,12 +64,18 @@ class ComplaintIntakeService(StationComplaintService):
         now = utcnow()
         if data.incident_occurred_at and data.incident_occurred_at > now:
             raise HTTPException(422, 'Incident date cannot be in the future')
-        # This workflow creates a new, explicitly unlinked walk-in profile. Never
-        # resolve an online account by phone/email or accept arbitrary person IDs.
-        person = Complainant(**data.complainant.model_dump(), user_id=None)
-        self.db.add(person)
-        self.db.flush()
-        complaint = Complaint(**data.model_dump(exclude={'station_id', 'complainant', 'details_confirmed_with_complainant', 'witnesses'}),
+        # Only a valid, officer/station-bound email consent can reuse an account.
+        # Otherwise create an unlinked profile; never trust arbitrary person IDs.
+        if data.email_consent_id or data.email_consent_code:
+            if not data.email_consent_id or not data.email_consent_code:
+                raise HTTPException(422, 'Both consent challenge and code are required')
+            from app.modules.complaints.intake_email import consume
+            person = consume(self.db, officer, data)
+        else:
+            person = Complainant(**data.complainant.model_dump(), user_id=None)
+            self.db.add(person)
+            self.db.flush()
+        complaint = Complaint(**data.model_dump(exclude={'station_id', 'complainant', 'details_confirmed_with_complainant', 'witnesses', 'email_consent_id', 'email_consent_code'}),
             complainant_id=person.id, registered_by_officer_id=officer.id, station_id=station.id,
             reference_number=allocate_complaint_reference(self.db, station, now),
             channel='IN_STATION', status='SUBMITTED', submitted_at=now)

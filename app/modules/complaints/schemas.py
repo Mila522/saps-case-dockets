@@ -103,12 +103,19 @@ class WalkInComplainant(BaseModel):
     phone_number: str = Field(min_length=1, max_length=30)
     email: EmailStr | None = Field(default=None, max_length=254)
     preferred_contact_method: Literal['PHONE', 'SMS', 'EMAIL'] = 'PHONE'
+    address_line_1: str | None = Field(default=None, max_length=255)
+    address_line_2: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=150)
+    province: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=20)
 
 
 class InStationRegistration(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     station_id: uuid.UUID | None = Field(default=None, description='Selected receiving station; must match the active officer assignment. Legacy clients may omit it to use that assignment.')
     complainant: WalkInComplainant
+    email_consent_id: uuid.UUID | None = None
+    email_consent_code: str | None = Field(default=None, pattern=r'^[0-9]{6}$', repr=False)
     details_confirmed_with_complainant: Literal[True]
     crime_category: CrimeCategory
     incident_description: str = Field(min_length=1, max_length=20000)

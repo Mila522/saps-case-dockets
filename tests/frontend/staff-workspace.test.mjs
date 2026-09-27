@@ -9,4 +9,6 @@ test('shared staff sign-in selects fixed destinations from verified roles and pe
   assert.equal(staffWorkspace({...user('COMPLAINANT','docket.view_assigned'),redirect:'https://attacker.invalid'}),null);
   assert.equal(staffWorkspace(user('INVESTIGATING_OFFICER','complaint.submit')),null);
   assert.equal(staffWorkspace(user('STATION_COMMANDER','complaint.submit')),null);
+  assert.equal(staffWorkspace({roles:[{code:'SYSTEM_ADMINISTRATOR'}],permissions:[{code:'user.manage'},{code:'audit.view_all'}]}),'/admin/');
+  assert.equal(staffWorkspace(user('SYSTEM_ADMINISTRATOR','user.manage')),null);
 });

@@ -71,6 +71,8 @@ class FeedbackService:
         self.db.add(row)
         self.db.flush()
         self.audit(user, complaint, 'feedback.published', row.id)
+        from app.modules.communications.case_email import enqueue
+        enqueue(self.db, complaint, docket.id, 'feedback.published', row.id)
         notify_complainant(self.db, complaint, 'feedback.published', docket_id=docket.id, actor_user_id=user.id)
         response = FeedbackResponse.model_validate(row)
         self.db.commit()

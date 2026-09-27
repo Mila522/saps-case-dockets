@@ -81,14 +81,12 @@ not claim remote identity verification or a legal signature workflow.
 
 ## D handoff — backend preserved, UI unfinished
 
-- **Actual SMS with CAS:** `notify_complainant` currently creates generic `IN_APP`
-  records/attempts, not SMS. Implement a configured provider, encrypted destination,
-  durable transactional delivery intent, idempotency, retries and delivery-result
-  auditing. Attach it to the PDF-specified successful approval event (verify exact
-  clause; the available commander event is `DocketService.approve` with `APPROVED`).
-  Acceptance/CAS allocation is distinct from commander approval. Do not label a
-  generic in-app record as an SMS. An unlinked walk-in profile cannot read in-app
-  notifications through an online account yet.
+- **Case confirmation by email:** the later email-only requirement supersedes
+  SMS delivery. The case email outbox reports CAS allocation at docket creation as pending
+  approval, then sends a separate confirmation after commander approval. See `case-email-tracking.md` for
+  verified recipients, worker scheduling, retries and delivery status. Historical
+  SMS data remains unchanged. Unlinked walk-ins have no verified email proof and
+  are explicitly marked unsent; secure account linking remains separate work.
 - **Automatic alerts:** the backend exposes explicit `POST /alerts/evaluate` and
   policy settings, but no automatic scheduler/worker was found. D must add scheduled,
   scoped, idempotent evaluation and agree thresholds with the PDF; existing 7-day,

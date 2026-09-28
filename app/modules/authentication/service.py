@@ -100,7 +100,7 @@ class AuthService:
             self.deny('auth.mfa_failure', user)
         return user, row, claims
 
-    def issue_tokens(self, user: User, previous: AuthSession) -> schemas.TokenResponse:
+    def issue_tokens(self, user: User, previous: AuthSession | None) -> schemas.TokenResponse:
         now = security.utcnow()
         raw_refresh = security.generate_refresh_token()
         row = AuthSession(user_id=user.id, refresh_token_hash=security.hash_refresh_token(raw_refresh),
@@ -108,9 +108,10 @@ class AuthService:
             created_from_ip=self.ip, user_agent=self.user_agent)
         self.db.add(row)
         self.db.flush()
-        previous.revoked_at = now
-        previous.last_used_at = now
-        previous.replaced_by_session_id = row.id
+        if previous is not None:
+            previous.revoked_at = now
+            previous.last_used_at = now
+            previous.replaced_by_session_id = row.id
         return schemas.TokenResponse(access_token=security.create_access_token(user.id, row.id),
             refresh_token=raw_refresh, expires_in=settings.access_token_expire_minutes * 60)
 
@@ -134,7 +135,8 @@ class AuthService:
                 raise HTTPException(409, 'Username or email is unavailable') from None
             raise
         self.db.add(Complainant(user_id=user.id, first_name=data.first_name, last_name=data.last_name,
-            email=email, phone_number=data.phone_number, preferred_contact_method=data.preferred_contact_method))
+            email=email, phone_number=data.phone_number, preferred_contact_method=data.preferred_contact_method,
+            address_line_1=data.address_line_1, city=data.city, province=data.province))
         self.db.add(UserRole(user_id=user.id, role_id=role.id))
         self.audit('auth.registration', user)
         response = self.challenge(user)
@@ -142,7 +144,7 @@ class AuthService:
         return response
 
     @transactional
-    def login(self, data: schemas.LoginRequest) -> schemas.LoginResponse:
+    def login(self, data: schemas.LoginRequest) -> schemas.LoginResponse | schemas.TokenResponse:
         user = self.repo.by_identifier(data.username.strip().lower())
         password = data.password.get_secret_value()
         if not self.eligible(user):
@@ -161,7 +163,12 @@ class AuthService:
         user.failed_login_attempts = 0
         user.locked_until = None
         self.audit('auth.password_verified', user)
-        response = self.challenge(user)
+        if user.is_verified and self.repo.email_method(user) and not self.repo.active_mfa(user.id):
+            user.last_login_at = now
+            response = self.issue_tokens(user, None)
+            self.audit('auth.login', user)
+        else:
+            response = self.challenge(user)
         self.db.commit()
         return response
 

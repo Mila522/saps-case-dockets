@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>System administration · SAPS</title><link rel="stylesheet" href="/officer/assets/styles.css"><link rel="stylesheet" href="/investigator/assets/investigator.css"><link rel="stylesheet" href="/admin/style.css?v=navy-gold-1">
-<script type="module" src="/admin/app.mjs"></script></head>
-<body><main class="admin-shell"><header class="page-heading"><div><p class="eyebrow">SAPS Case Docket Management</p><h1>System administration</h1><p id="identity">Checking access…</p></div><button id="logout" class="button button-secondary" hidden>Sign out</button></header>
+<script type="module" src="/admin/app.mjs"></script><link rel="stylesheet" href="/portal/branding.css"></head>
+<body><main class="admin-shell"><header class="page-heading"><div><p class="eyebrow"><img class="saps-logo" src="/portal/saps-logo.jfif" alt="South African Police Service logo" width="72" height="72">SAPS Case Docket Management</p><h1>System administration</h1><p id="identity">Checking access…</p></div><button id="logout" class="button button-secondary" hidden>Sign out</button></header>
 <p id="notice" role="status" tabindex="-1" hidden></p><div id="workspace" hidden>
 <nav class="section-nav" aria-label="Administration"><button id="users-tab" class="button">User accounts</button><button id="audit-tab" class="button">Audit trail</button></nav>
 <section id="users-panel"><h2>User accounts</h2><form id="user-filters" class="filters"><label>Search username or email<input name="q" maxlength="254"></label><label>Role<select name="role"></select></label><label>Station<select name="station_id"></select></label><label>Status<select name="active"><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select></label><button class="button">Search</button></form>

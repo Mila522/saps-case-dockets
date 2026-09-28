@@ -14,7 +14,7 @@ function harness(request) {
     const node = {textContent: value, tag, dataset: {}, setAttribute() {}};
     nodes.push(node); parent?.children?.push(node); return node;
   };
-  const context = vm.createContext({api:{request}, page(){}, text, categoryChoices, stationLabel, stationAddress, bindCrimeCategory(){}, document:{createElement:()=>({setAttribute(){}})},
+  const context = vm.createContext({api:{request}, page(){}, text, categoryChoices, stationLabel, stationAddress, bindCrimeCategory(){}, mountSubmissionExtras(){return async()=>({});}, document:{createElement:()=>({setAttribute(){}})},
     form(items) { fields.push(...items); return {querySelector: s => s === '[name=station_id]' ? select : submit}; },
     button(label, action) { const b={label, action}; buttons.push(b); return b; }
   });

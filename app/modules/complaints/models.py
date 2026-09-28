@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text, true
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -25,6 +25,7 @@ class Complaint(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     channel: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(30), server_default=text("'SUBMITTED'"), index=True)
     crime_category: Mapped[str] = mapped_column(String(150))
+    vehicle_number_plate: Mapped[str | None] = mapped_column(String(30))
     incident_description: Mapped[str] = mapped_column(Text)
     incident_occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     incident_location: Mapped[str] = mapped_column(String(255))
@@ -87,3 +88,21 @@ class WitnessStatement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     witness: Mapped[Witness] = relationship(back_populates="statements")
+
+
+class ComplaintUpload(UUIDPrimaryKeyMixin, Base):
+    """Private complainant submissions, staged until atomically linked to intake."""
+    __tablename__ = 'complaint_uploads'
+    __table_args__ = (
+        CheckConstraint('file_size_bytes > 0', name='positive_size'),
+        CheckConstraint("purpose IN ('EVIDENCE', 'VEHICLE_REGISTRATION')", name='purpose'),
+    )
+    uploaded_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('case_mgmt.users.id', ondelete='RESTRICT'), index=True)
+    complaint_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey('case_mgmt.complaints.id', ondelete='RESTRICT'), index=True)
+    purpose: Mapped[str] = mapped_column(String(30))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(150))
+    storage_key: Mapped[str] = mapped_column(String(32), unique=True)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256_hash: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

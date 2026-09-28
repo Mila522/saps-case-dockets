@@ -123,6 +123,12 @@ class InvestigationService:
             CaseAssignment.docket_id == docket.id, CaseAssignment.unassigned_at.is_(None)))
         if current and current.investigating_officer_id == target.id:
             raise HTTPException(409, 'Investigator is already assigned')
+        # The officer row lock serializes allocations across different dockets.
+        # Recheck after taking it so two commanders cannot allocate the same
+        # free investigator from stale dropdowns at the same time.
+        from app.modules.investigations.availability import busy_assignment
+        if self.db.scalar(busy_assignment(target.id).limit(1)) is not None:
+            raise HTTPException(409, 'This investigator is busy with another unfinished case. Select an available investigator.')
         now = utcnow()
         if current:
             current.unassigned_at, current.unassignment_reason = now, data.reason

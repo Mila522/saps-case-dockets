@@ -16,6 +16,9 @@ class RegistrationRequest(StrictRequest):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     phone_number: str = Field(min_length=1, max_length=30)
+    address_line_1: str | None = Field(default=None, min_length=1, max_length=255)
+    city: str | None = Field(default=None, min_length=1, max_length=150)
+    province: str | None = Field(default=None, min_length=1, max_length=100)
     preferred_contact_method: Literal['SMS', 'EMAIL', 'PHONE'] = 'EMAIL'
 
     @field_validator('username', 'email', mode='before')
@@ -105,3 +108,17 @@ class CurrentUserResponse(BaseModel):
     permissions: list[PermissionSummary]
     complainant_id: uuid.UUID | None
     officer_id: uuid.UUID | None
+
+
+class ForgotPasswordRequest(StrictRequest):
+    email: EmailStr = Field(max_length=254)
+
+
+class ResetPasswordRequest(StrictRequest):
+    token: SecretStr = Field(min_length=40, max_length=128)
+    password: SecretStr = Field(min_length=12, max_length=1024)
+
+    @field_validator('password')
+    @classmethod
+    def strength(cls, value):
+        return RegistrationRequest.password_strength(value)

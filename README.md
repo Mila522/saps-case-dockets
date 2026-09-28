@@ -1,16 +1,18 @@
 # saps-case-dockets
 An academic prototype exploring requirements and system design for improving the registration, tracking, accountability, and digital management of SAPS case dockets.
 
+See [Updated role workflows](docs/role-workflows.md) for residential location, private complainant evidence, required vehicle documents, downloadable confirmations, investigator feedback and the commander full-docket screen.
+
 Collaborator D adds scoped feedback, transactional in-app notifications, private
 printable confirmations, operational alerts, and dashboard APIs. See
 [Collaborator D APIs](docs/collaborator-d-api.md) for routes, authorization,
 configuration, default policies, and successful full-suite verification.
 It reuses the existing schema without adding or modifying migrations.
 
-Authentication under `/api/v1/auth` now uses password plus emailed six-digit
-verification codes, with a protected one-time transition for existing TOTP users.
+Authentication under `/api/v1/auth` uses one-time emailed account verification,
+then password sign-in, with a protected one-time transition for existing TOTP users.
 See [Authentication](docs/authentication.md) for SMTP configuration, migration,
-security limits, recovery requirements and testing. Apply migration `eabef524c593`
+security limits, recovery requirements and testing. Apply migrations through `aea1947e1d7f`
 before starting the updated app. Email verification is not phishing-resistant
 or equivalent to strong authenticator/passkey MFA. Automated tests use fake mail;
 actual inbox delivery must be tested manually after local SMTP configuration.

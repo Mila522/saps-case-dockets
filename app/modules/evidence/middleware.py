@@ -13,7 +13,7 @@ class EvidenceUploadLimit:
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or scope['method'] != 'POST' or not re.fullmatch(
-                r'/api/v1/evidence/[^/]+/files/?', scope['path']):
+                r'/api/v1/(?:evidence/[^/]+/files|complaints/uploads)/?', scope['path']):
             return await self.app(scope, receive, send)
         # Permit multipart headers alongside the stricter stored-file byte limit.
         maximum = settings.evidence_max_file_bytes + 1024 * 1024

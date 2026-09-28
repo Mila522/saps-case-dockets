@@ -75,7 +75,7 @@ class ComplaintIntakeService(StationComplaintService):
             person = Complainant(**data.complainant.model_dump(), user_id=None)
             self.db.add(person)
             self.db.flush()
-        complaint = Complaint(**data.model_dump(exclude={'station_id', 'complainant', 'details_confirmed_with_complainant', 'witnesses', 'email_consent_id', 'email_consent_code'}),
+        complaint = Complaint(**data.model_dump(exclude={'station_id', 'complainant', 'details_confirmed_with_complainant', 'witnesses', 'email_consent_id', 'email_consent_code', 'upload_ids'}),
             complainant_id=person.id, registered_by_officer_id=officer.id, station_id=station.id,
             reference_number=allocate_complaint_reference(self.db, station, now),
             channel='IN_STATION', status='SUBMITTED', submitted_at=now)
@@ -83,6 +83,8 @@ class ComplaintIntakeService(StationComplaintService):
         self.db.flush()
         self.db.add(ComplaintStatement(complaint_id=complaint.id, statement_text=data.incident_description,
             recorded_by_officer_id=officer.id, statement_version=1, is_current=True))
+        from app.modules.complaints.uploads import attach
+        attach(self.db, user_id, complaint, data.upload_ids)
         for witness in data.witnesses:
             self._witness(complaint, officer.id, witness)
         self.audit(user_id, complaint, 'complaint.register_in_station')

@@ -94,7 +94,7 @@ def test_station_queue_details_and_materials_for_both_roles(workflow_context, ro
 
 
 @pytest.mark.parametrize('role', ['CHARGE_OFFICER', 'STATION_COMMANDER', 'INVESTIGATING_OFFICER'])
-def test_staff_password_requires_email_code_before_workspace_access(workflow_context, role):
+def test_verified_staff_sign_in_without_another_email_code(workflow_context, role):
     from app.modules.access.models import User
     from auth_mailbox import code_for
     client,db=workflow_context
@@ -103,10 +103,8 @@ def test_staff_password_requires_email_code_before_workspace_access(workflow_con
     login=client.post('/api/v1/auth/login',json={'username':user.username,'password':'Testing-Password12!'})
     assert login.status_code==200
     challenge=login.json()
-    assert 'access_token' not in challenge
+    assert 'access_token' in challenge
     assert client.get('/api/v1/auth/me').status_code==401
-    verified=client.post('/api/v1/auth/email/verify',json={'challenge_token':challenge['challenge_token'],'code':code_for(user.email)})
-    assert verified.status_code==200
-    headers={'Authorization':'Bearer '+verified.json()['access_token']}
+    headers={'Authorization':'Bearer '+challenge['access_token']}
     me=client.get('/api/v1/auth/me',headers=headers).json()
     assert [item['code'] for item in me['roles']]==[role]

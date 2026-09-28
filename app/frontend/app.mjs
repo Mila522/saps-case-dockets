@@ -1,3 +1,4 @@
+import {mountSubmissionExtras, mountUploads, downloadPrivate} from './submission-extras.mjs';
 import {categoryChoices, bindCrimeCategory, complaintPayload, stationLabel, stationAddress} from './complaint-fields.mjs';
 import {createClient} from './api.mjs';
 import {mountEmailStatus} from './case-email-ui.mjs';
@@ -10,7 +11,7 @@ let busy = false;
 const post = (path, body) => api.request(path, {method: 'POST', body});
 function note(text = '') { message.textContent = text; }
 function session(active) {
-  for (const id of ['mine-tab', 'new-tab', 'logout']) document.getElementById(id).hidden = !active;
+  for (const id of ['mine-tab', 'new-tab', 'track-tab', 'logout']) document.getElementById(id).hidden = !active;
   for (const id of ['login-tab', 'register-tab']) document.getElementById(id).hidden = active;
 }
 async function run(task) {
@@ -43,19 +44,38 @@ function form(fields, submitLabel, action) {
 function login() {
   page('Sign in');
   form([['username','Username or email',{autocomplete:'username',maxlength:254}],['password','Password',{type:'password',autocomplete:'current-password',maxlength:1024}]], 'Continue', async data => mfa(await post('/auth/login', data)));
+  button('Forgot password?', forgotPassword);
 }
 function register() {
   page('Create your account');
   form([['first_name','First name',{maxlength:100,autocomplete:'given-name'}],['last_name','Last name',{maxlength:100,autocomplete:'family-name'}],
     ['username','Username',{minlength:3,maxlength:100,pattern:'[A-Za-z0-9][A-Za-z0-9_.\\-]*',autocomplete:'username'}],['email','Email',{type:'email',maxlength:254,autocomplete:'email'}],
+    ['address_line_1','Residential address',{maxlength:255,autocomplete:'street-address'}],['city','City',{maxlength:150,autocomplete:'address-level2'}],['province','Province',{maxlength:100,autocomplete:'address-level1'}],
     ['phone_number','Phone number',{type:'tel',maxlength:30,autocomplete:'tel'}],['password','Password',{type:'password',minlength:12,maxlength:1024,autocomplete:'new-password',hint:'Use at least 12 characters, uppercase and lowercase letters, a number and a special character. No surrounding spaces.'}]],
     'Create account', async data => {
       if (data.password !== data.password.trim() || !/[A-Z]/.test(data.password) || !/[a-z]/.test(data.password) || !/\d/.test(data.password) || !/[^\w\s]/.test(data.password)) throw new Error('Your password must meet all the requirements shown below the field.');
       await mfa(await post('/auth/register', data));
     });
 }
+async function signedIn(tokens) {
+  api.setTokens(tokens); session(true);
+  if(linkedComplaint){const id=linkedComplaint;linkedComplaint=null;window.history.replaceState(null,'',window.location.pathname);await detail(id);}
+  else await mine();
+}
+function forgotPassword() {
+  page('Reset your password');
+  form([['email','Account email',{type:'email',maxlength:254}]],'Send recovery instructions',async data=>{
+    const result=await post('/auth/forgot-password',data);note(result.message);
+  });
+  text('Already have a recovery token? Paste it below. It expires after 15 minutes.');
+  form([['token','Recovery token',{maxlength:128,autocomplete:'off'}],['password','New password',{type:'password',minlength:12,maxlength:1024,autocomplete:'new-password',hint:'Use uppercase and lowercase letters, a number and a special character.'}]],'Change password',async data=>{
+    const result=await post('/auth/reset-password',data);api.clear();session(false);login();note(result.message);
+  });
+  button('Back to sign-in',login);
+}
 async function mfa(challenge) {
-  page('Verify your sign-in');
+  if(challenge.access_token)return signedIn(challenge);
+  page('Verify your account');
   const transition = challenge.status === 'TOTP_TRANSITION_REQUIRED';
   text(transition ? 'To protect your existing account, verify your current authenticator once before switching to email. If you no longer have it, contact your account administrator for identity recovery.' : `A code was submitted to the mail server for ${challenge.masked_recipient}. Check your inbox or spam folder. It expires in five minutes; inbox delivery is not confirmed.`);
   const verification = form([['code',transition ? 'Existing account verification code' : 'Six-digit email code',{inputmode:'numeric',pattern:'[0-9]{6}',minlength:6,maxlength:6,autocomplete:'one-time-code'}]], 'Verify and sign in', async data => {
@@ -100,16 +120,20 @@ async function mfa(challenge) {
   }
   button('Back to sign-in', login, actions).className = 'back-signin';
 }
+function trackReference() {
+  page('Track reference');
+  form([['reference_number','Track one of your complaint references',{maxlength:100}]], 'Track reference', async data=>{
+    const item=await post('/complaints/track-by-reference',{reference_number:data.reference_number.trim()});
+    await detail(item.id);
+  });
+  document.querySelector('#field-reference_number').focus();
+}
 async function mine(offset = 0) {
   page('My complaints'); text('Loading complaints…');
   const data = await api.request(`/complaints/mine?limit=10&offset=${offset}`);
   page('My complaints');
   const emailPanel=document.createElement('section');view.append(emailPanel);
   void mountEmailStatus(emailPanel,(path,options)=>api.request(path,options));
-  form([['reference_number','Track one of your complaint references',{maxlength:100}]], 'Track reference', async data=>{
-    const item=await post('/complaints/track-by-reference',{reference_number:data.reference_number.trim()});
-    await detail(item.id);
-  });
   if (!data.items.length) text('No complaints to show. Submit a new complaint to get started.');
   for (const item of data.items) {
     const card = document.createElement('article'); card.className = 'card'; view.append(card);
@@ -128,6 +152,20 @@ async function detail(id) {
   page('Complaint details'); const list = document.createElement('dl'); view.append(list);
   for (const [label, value] of [['Reference',item.reference_number],['CAS number',item.cas_number || 'Not allocated'],['Status',item.status.replaceAll('_',' ')],['Submitted',date(item.submitted_at)],['Review started',date(item.review_started_at)],['Last updated',date(item.updated_at)]]) { text(label,'dt',list); text(value,'dd',list); }
   button('Refresh status', () => detail(id)); button('Back to my complaints', () => mine());
+  text('Download confirmations','h3');
+  const confirmation = type => async()=>{
+    const doc=await post(`/complaints/${id}/documents`,{document_type:type});
+    await downloadPrivate((p,o)=>api.request(p,o),`/documents/${doc.id}/download`,`${doc.document_number}.html`);
+  };
+  button('Download registration confirmation',confirmation('COMPLAINT_REGISTRATION_CONFIRMATION'));
+  if(['REFUSED','ESCALATED'].includes(item.status))button('Download refusal confirmation',confirmation('REFUSAL_CONFIRMATION'));
+  const files=document.createElement('section');view.append(files);
+  await mountUploads(files,id,(p,o)=>api.request(p,o));
+  if(!['REFUSED','ESCALATED'].includes(item.status)){
+    const uploadForm=form([['file','Add evidence (image, video, document or voice recording)',{type:'file',accept:'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.odt,.csv'}]],'Upload evidence',async(data,node)=>{
+      const body=new FormData(node);body.append('complaint_id',id);await api.request('/complaints/uploads',{method:'POST',body});await detail(id);note('Evidence uploaded.');
+    });
+  }
   const updates = await api.request(`/complaints/${encodeURIComponent(id)}/updates`);
   if (updates.docket_status) text('Case status: ' + updates.docket_status.replaceAll('_',' '));
   text('Official updates and appointments', 'h3');
@@ -143,7 +181,7 @@ async function newComplaint() {
   const stationStatus = text('Loading receiving stations…');
   stationStatus.setAttribute('role', 'status');
   const complaintForm = form([['station_id','Receiving station',{tag:'select',choices:[['','Select a receiving station']]}],
-    ['crime_category','Crime category',{tag:'select',choices:categoryChoices}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Actual witnesses and evidence may be recorded by the case officer later.'}],
+    ['crime_category','Crime category',{tag:'select',choices:categoryChoices}],['incident_description','Your statement: what happened?',{tag:'textarea',maxlength:20000,hint:'Your description is preserved as the first statement. Add optional witnesses and evidence below.'}],
     ['incident_location','Incident location',{maxlength:255}],['incident_city','City (optional)',{optional:true,maxlength:150}],
     ['incident_province','Province',{maxlength:100}],['incident_occurred_at','Incident date and time (optional)',{type:'datetime-local',optional:true,hint:'Enter the time in your device’s local timezone.'}]], 'Submit complaint', async (data, node) => {
       data = complaintPayload(data);
@@ -152,10 +190,12 @@ async function newComplaint() {
       for (const key of ['crime_category','incident_description','incident_location','incident_province']) if (!data[key]) throw new Error('Complete all required fields with more than spaces.');
       if (data.incident_occurred_at) { const occurred = new Date(data.incident_occurred_at); if (occurred > new Date()) throw new Error('The incident date cannot be in the future.'); data.incident_occurred_at = occurred.toISOString(); } else delete data.incident_occurred_at;
       if (!data.incident_city) delete data.incident_city;
+      Object.assign(data,await collectExtras());
       const result = await post('/complaints', data); node.reset();
       page('Complaint submitted'); text('Keep your reference number:'); text(result.reference_number,'code');
       text('Status: ' + result.status.replaceAll('_',' ')); button('Track this complaint', () => detail(result.id)); button('My complaints', () => mine());
     });
+  const collectExtras=mountSubmissionExtras(complaintForm,(p,o)=>api.request(p,o));
   bindCrimeCategory(complaintForm);
   const stationSelect = complaintForm.querySelector('[name=station_id]');
   const stationDetails = document.createElement('p'); stationDetails.className = 'station-address'; stationDetails.setAttribute('role','status'); stationDetails.hidden = true; stationSelect.after(stationDetails);
@@ -199,6 +239,7 @@ async function newComplaint() {
 document.querySelector('#login-tab').onclick = () => run(async () => login());
 document.querySelector('#register-tab').onclick = () => run(async () => register());
 document.querySelector('#mine-tab').onclick = () => run(() => mine());
+document.querySelector('#track-tab').onclick = () => run(async () => trackReference());
 document.querySelector('#new-tab').onclick = () => run(newComplaint);
 document.querySelector('#logout').onclick = () => run(async () => { try { await api.logout(); note('You have signed out.'); } finally { session(false); login(); } });
 session(false);

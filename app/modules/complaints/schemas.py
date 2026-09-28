@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, EmailStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, EmailStr, model_validator
 from app.modules.evidence.schemas import EvidenceOut
 from app.modules.complaints.categories import CrimeCategory
 
@@ -48,6 +48,7 @@ class StationComplaintOut(BaseModel):
     receiving_station: ReceivingStationOut | None = None
     channel: str
     crime_category: str
+    vehicle_number_plate: str | None = None
     incident_description: str
     incident_occurred_at: datetime | None
     incident_location: str
@@ -68,7 +69,18 @@ class StationComplaintPage(BaseModel):
     has_more: bool
 
 
+class WitnessRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    phone_number: str | None = Field(default=None, min_length=1, max_length=30)
+    email: EmailStr | None = Field(default=None, max_length=254)
+    address: str | None = Field(default=None, min_length=1, max_length=4000)
+    statement_text: str | None = Field(default=None, min_length=1, max_length=20000)
+
+
 class ComplaintRegistration(BaseModel):
+    witnesses: list[WitnessRequest] = Field(default_factory=list, max_length=50)
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
     station_id: uuid.UUID
@@ -78,6 +90,17 @@ class ComplaintRegistration(BaseModel):
     incident_location: str = Field(min_length=1, max_length=255)
     incident_city: str | None = Field(default=None, min_length=1, max_length=150)
     incident_province: str = Field(min_length=1, max_length=100)
+    vehicle_number_plate: str | None = Field(default=None, min_length=1, max_length=30)
+    upload_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode='after')
+    def vehicle_requirements(self):
+        if self.crime_category == 'Vehicle theft' and not self.vehicle_number_plate:
+            raise ValueError('Vehicle theft requires the vehicle number plate')
+        if len(set(self.upload_ids)) != len(self.upload_ids):
+            raise ValueError('Duplicate uploads are not allowed')
+        return self
+
 
 
 class StatementRequest(BaseModel):
@@ -86,14 +109,6 @@ class StatementRequest(BaseModel):
     expected_version: int = Field(default=0, ge=0)
 
 
-class WitnessRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    first_name: str = Field(min_length=1, max_length=100)
-    last_name: str = Field(min_length=1, max_length=100)
-    phone_number: str | None = Field(default=None, min_length=1, max_length=30)
-    email: EmailStr | None = Field(default=None, max_length=254)
-    address: str | None = Field(default=None, min_length=1, max_length=4000)
-    statement_text: str | None = Field(default=None, min_length=1, max_length=20000)
 
 
 class WalkInComplainant(BaseModel):
@@ -123,6 +138,17 @@ class InStationRegistration(BaseModel):
     incident_location: str = Field(min_length=1, max_length=255)
     incident_city: str | None = Field(default=None, min_length=1, max_length=150)
     incident_province: str = Field(min_length=1, max_length=100)
+    vehicle_number_plate: str | None = Field(default=None, min_length=1, max_length=30)
+    upload_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode='after')
+    def vehicle_requirements(self):
+        if self.crime_category == 'Vehicle theft' and not self.vehicle_number_plate:
+            raise ValueError('Vehicle theft requires the vehicle number plate')
+        if len(set(self.upload_ids)) != len(self.upload_ids):
+            raise ValueError('Duplicate uploads are not allowed')
+        return self
+
     witnesses: list[WitnessRequest] = Field(default_factory=list, max_length=50)
 
 

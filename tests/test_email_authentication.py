@@ -114,7 +114,7 @@ def test_legacy_transition_requires_existing_factor_then_email(auth_context):
     db.refresh(method)
     assert not method.is_active and user.is_verified and db.get(UserEmailAuth, user.id)
     assert client.get('/api/v1/auth/me', headers=authorization(tokens.json())).status_code == 200
-    assert client.post('/api/v1/auth/login', json={'username':data['username'],'password':data['password']}).json()['status'] == 'EMAIL_CODE_REQUIRED'
+    assert client.post('/api/v1/auth/login', json={'username':data['username'],'password':data['password']}).json()['access_token']
 
 
 def test_address_and_purpose_binding(auth_context):
@@ -216,6 +216,8 @@ def test_staff_failed_resend_revokes_old_and_failed_codes_then_recovers(workflow
     db.add(UserRole(user_id=user.id,role_id=db.scalar(select(Role.id).where(Role.code==role))))
     db.add(Officer(user_id=user.id,station_id=station.id,service_number=uuid.uuid4().hex,rank='Test'))
     db.commit()
+    # Exercise failed delivery while staff account verification is still pending.
+    db.delete(db.get(UserEmailAuth,user.id)); user.is_verified=False; user.mfa_enabled=False; db.commit()
     credentials={'username':data['username'],'password':data['password']}
     first=client.post('/api/v1/auth/login',json=credentials)
     assert first.status_code==200 and first.json()['status']=='EMAIL_CODE_REQUIRED'

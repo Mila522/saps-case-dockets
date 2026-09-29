@@ -28,3 +28,6 @@ router.include_router(evidence_router)
 router.include_router(feedback_router)
 router.include_router(communications_router)
 router.include_router(stations_router)
+
+from app.modules.complaints.uploads import router as uploads_router
+router.include_router(uploads_router)

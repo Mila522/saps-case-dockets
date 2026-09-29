@@ -1,3 +1,4 @@
+import {mountFullDocket} from '/officer/assets/full-docket.mjs';
 import {escape as e,label,badge,date,field,check,link,table,empty,notice,facts,section,form,confirmAction} from './ui.mjs';
 import {NOTE_TYPES,EVIDENCE_TYPES,writable} from './contracts.mjs';
 import {mountMaterials} from '/portal/case-materials.mjs';
@@ -10,11 +11,10 @@ export async function docketDetail(ctx,id) {
   ]);
   const contact=await ctx.api.request(`/investigations/dockets/${id}/complainant`);
   const open=writable(docket);
-  let invitationRequest=crypto.randomUUID();
-  const invitationForm=open&&ctx.has('feedback.provide')?form('invitation-form','Invite complainant to the station',
-    field('purpose','Appointment purpose',{choices:[['INTERVIEW','Interview'],['MEETING','Meeting']]})+
-    field('starts_at','Appointment date and time',{type:'datetime-local',hint:'Your local time. The email will show South African time.'}),
-    'Queue invitation email',true):'';
+  const feedback=await ctx.all(`/dockets/${id}/feedback`);
+  const feedbackForm=open&&ctx.has('feedback.provide')?form('feedback-form','Publish official feedback to complainant',
+    field('feedback_type','Feedback type',{choices:['PROGRESS_UPDATE','REQUEST_FOR_INFORMATION','GENERAL','CASE_CLOSURE']})+
+    field('subject','Subject',{max:255})+field('message','Official message',{type:'textarea',max:10000,wide:true}), 'Publish official feedback'):'';
   const noteForm=open&&ctx.has('case.add_note')?form('note-form','Add investigation note',
     field('note_type','Note type',{choices:NOTE_TYPES})+field('content','Note',{type:'textarea',max:20000,wide:true,hint:'0 / 20,000 characters. Notes cannot be edited or deleted; append a correction if needed.'})+check('is_sensitive','Mark this note as sensitive'),'Save note'):'';
   const statuses=docket.allowed_next_statuses||[];
@@ -26,7 +26,7 @@ export async function docketDetail(ctx,id) {
     field('collected_at','Collection date and time (optional)',{type:'datetime-local',required:false,hint:'Enter your device’s local time.'})+
     field('collection_location','Collection location (optional)',{required:false,max:4000})+field('storage_location','Current storage location',{max:255}),'Register evidence'):'';
   ctx.render(`<div class="page-heading"><div><p class="eyebrow">${e(docket.station_name)} / Docket</p><h1>${e(docket.cas_number)}</h1><p>${badge(docket.status)} <span class="muted">Complaint ${e(docket.complaint_reference)}</span></p></div><div class="actions">${link('Assigned dockets','/investigator/')}<button id="refresh" class="button button-secondary">Refresh docket</button></div></div>
-    <nav class="section-nav" aria-label="Docket sections"><a href="#overview">Overview</a><a href="#complainant-contact">Complainant contact details</a>${invitationForm?'<a href="#invitation-form">Send meeting/interview invitation</a>':''}<a href="#notes">Investigation notes</a><a href="#evidence">Evidence</a><a href="#status-history">Status history</a>${statuses.length?'<a href="#status-form">Change status</a>':''}</nav>
+    <nav class="section-nav" aria-label="Docket sections"><a href="#overview">Overview</a><a href="#complete-record">Complete docket &amp; activity trail</a><a href="#complainant-contact">Complainant contact details</a><a href="#notes">Investigation notes</a><a href="#evidence">Evidence</a><a href="#status-history">Status history</a>${statuses.length?'<a href="#status-form">Change status</a>':''}</nav>
     ${!open?'<p class="notice success">This docket is read-only. Its recorded history remains available.</p>':''}
     ${section('overview','Docket overview',facts([
       ['Crime category',docket.crime_category],['Station',docket.station_name],['Opened',date(docket.opened_at)],
@@ -38,9 +38,11 @@ export async function docketDetail(ctx,id) {
       ['Name',[contact.first_name,contact.last_name].join(' ')],['Phone',contact.phone_number],['Email',contact.email],
       ['Complainant address',[contact.address_line_1,contact.address_line_2,contact.city,contact.province,contact.postal_code].filter(Boolean).join(', ')||'Not recorded',true]
     ]))}
-    ${invitationForm}
+    ${section('official-feedback','Official feedback',feedback.length?feedback.map(row=>`<article><h3>${e(row.subject)}</h3><p>${e(row.message)}</p><small>${e(date(row.published_at))}</small></article>`).join(''):empty('No official feedback published yet.'))}
+    ${feedbackForm}
     ${section('notes',`Investigation notes (${notes.length})`,notes.length?`<ol class="timeline">${notes.map(note=>`<li><h3>${e(label(note.note_type))} ${note.is_sensitive?'<span class="count">Sensitive</span>':''}</h3><p class="meta">${e(date(note.created_at))} · Officer ${e(note.author_officer_id===ctx.user.officer_id?ctx.user.username:note.author_officer_id)}</p><p>${e(note.content)}</p></li>`).join('')}</ol>`:empty('No investigation notes recorded yet.'))}
     ${noteForm}
+    ${section('complete-record','Complete docket and activity trail','<div id="complete-docket"></div>')}
     ${section('materials','Complainant statement and witnesses','<div id="case-materials"></div>')}
     ${section('evidence',`Evidence register (${items.length})`,ctx.has('evidence.manage')?`<div class="filters">${field('evidence-type-filter','Evidence type',{required:false,choices:[['','All types'],...EVIDENCE_TYPES]})}${field('evidence-status-filter','Evidence status',{required:false,choices:[['','All statuses'],...[...new Set(items.map(item=>item.status))]]})}${field('digital-filter','Format',{required:false,choices:[['','All formats'],['true','Digital'],['false','Physical']]})}</div><div id="evidence-list"></div>`:empty('Your account cannot access the evidence register.'))}
     ${evidenceForm}
@@ -62,12 +64,9 @@ export async function docketDetail(ctx,id) {
     const count=()=>{document.querySelector('#content-hint').textContent=`${content.value.length.toLocaleString()} / 20,000 characters. Notes are append-only.`;};
     content.oninput=count;document.querySelector('#note-form').addEventListener('reset',()=>setTimeout(count,0));
   }
-  ctx.bindForm('invitation-form',async data=>{
-    if(!await confirmAction('Send station invitation?','A meeting/interview invitation with the station address and appointment time will be queued to the saved verified complainant email.')) return;
-    const result=await ctx.api.request(`/investigations/dockets/${id}/invitations`,{method:'POST',body:{
-      request_id:invitationRequest,purpose:data.purpose,starts_at:new Date(data.starts_at).toISOString()}});
-    invitationRequest=crypto.randomUUID();
-    notice(result.delivery_status==='PENDING'?'Invitation recorded and email queued.':`Invitation recorded. Email ${result.delivery_status}: ${result.delivery_reason}.`,result.delivery_status==='PENDING');
+  ctx.bindForm('feedback-form',async data=>{
+    await ctx.api.request(`/dockets/${id}/feedback`,{method:'POST',body:data});
+    await ctx.load();notice('Official feedback published to the complainant.',true);
   });
   ctx.bindForm('note-form' ,async data=>{
     await ctx.api.request(`/dockets/${id}/notes`,{method:'POST',body:data});
@@ -85,6 +84,8 @@ export async function docketDetail(ctx,id) {
   });
   // Bind case forms before loading the independently rendered dossier panel.
   // Otherwise a fast submit can perform native navigation while handlers wait.
+  const fullPanel=document.querySelector('#complete-docket');
+  void mountFullDocket(fullPanel,id,(path,options)=>ctx.api.request(path,options)).catch(error=>{fullPanel.textContent=error.message;});
   const materialsPanel = document.querySelector('#case-materials');
   void mountMaterials(materialsPanel,docket.complaint_id,(path,options)=>ctx.api.request(path,options))
     .catch(()=>{materialsPanel.textContent='Unable to load statements. Refresh the docket to retry.';});

@@ -54,12 +54,17 @@ class ComplaintRegistrationService:
             if data.incident_occurred_at is not None and data.incident_occurred_at > now:
                 raise HTTPException(422, 'Incident date cannot be in the future')
             reference = allocate_complaint_reference(self.db, station, now)
-            row = Complaint(**data.model_dump(), complainant_id=owner_id,
+            row = Complaint(**data.model_dump(exclude={'witnesses', 'upload_ids'}), complainant_id=owner_id,
                             channel='ONLINE', status='SUBMITTED', reference_number=reference,
                             submitted_at=now)
             self.db.add(row)
             self.db.flush()
             self.db.add(ComplaintStatement(complaint_id=row.id, statement_text=data.incident_description, statement_version=1, is_current=True))
+            from app.modules.complaints.uploads import attach
+            from app.modules.complaints.intake import ComplaintIntakeService
+            attach(self.db, user_id, row, data.upload_ids)
+            for witness in data.witnesses:
+                ComplaintIntakeService(self.db)._witness(row, None, witness)
             result = ComplaintTracking.model_validate(row)
             notify_complainant(self.db, row, 'complaint.registered', actor_user_id=user_id)
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,

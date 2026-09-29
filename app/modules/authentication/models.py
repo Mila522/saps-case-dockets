@@ -78,3 +78,12 @@ class UserMfaMethod(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+
+class PasswordReset(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = 'password_resets'
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('case_mgmt.users.id', ondelete='RESTRICT'), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

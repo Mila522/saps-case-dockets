@@ -1,14 +1,14 @@
 # Authentication and authorization
 
-## Current flow: password plus email verification
+## Current flow: one-time account verification
 
 Registration creates an active but **unverified, pending** account, complainant
 profile and COMPLAINANT role. No access or refresh tokens are issued yet. A random
 six-digit email code must be verified to finish signing in. Subsequent sign-ins
-require a valid password and a newly submitted email code. This applies to all
+return access and refresh tokens after a valid password, without sending another code. This applies to all
 roles, including charge officers, commanders and investigators.
 
-This is password plus email verification. It is **not phishing-resistant** and is
+This is password authentication after initial email ownership verification. It is **not phishing-resistant** and is
 not equivalent to a strong authenticator or passkey factor; email compromise can
 compromise this verification channel. It intentionally differs from the
 presentation's authenticator-MFA wording. The PDF has not been modified.
@@ -38,10 +38,12 @@ application. No tables are created at application startup.
 | Endpoint | Behavior |
 | --- | --- |
 | POST /register | Existing registration fields; 201 EMAIL_CODE_REQUIRED challenge, masked recipient, five-minute expiry, resend cooldown and SMTP acceptance status |
-| POST /login | Username/email and password; EMAIL_CODE_REQUIRED or TOTP_TRANSITION_REQUIRED for protected legacy accounts |
+| POST /login | Verified account: access/refresh tokens; pending account: EMAIL_CODE_REQUIRED; protected legacy account: TOTP_TRANSITION_REQUIRED |
 | POST /email/verify | challenge_token and code; consumes the challenge and returns normal access/refresh tokens |
 | POST /email/resend | challenge_token; returns a replacement challenge and invalidates every earlier email challenge for the account |
 | POST /email/transition | Legacy password challenge and current TOTP code; authorizes a pending email transition, never issues access tokens |
+| POST /forgot-password | Email; generic response, sends a recovery token only for active accounts with a verified email method |
+| POST /reset-password | Single-use token and strong new password; revokes all sessions and outstanding recovery tokens |
 | POST /refresh | Existing opaque refresh token rotation/reuse protection |
 | POST /logout | Existing session-family revocation |
 | GET /me | Safe user summary and current database roles/permissions |
@@ -64,7 +66,7 @@ TOTP enrollment historically did **not** verify email ownership. No existing
    remains active until that code is successfully verified.
 4. Successful email verification records the exact verified address/time,
    deactivates the TOTP method, revokes previous sessions and issues a new session.
-   Future logins use password plus email codes.
+   Future logins use the password without another email code.
 
 If the user cannot access their existing factor or recorded mailbox, keep the
 account protected. An administrator must complete independently verified account
@@ -203,3 +205,18 @@ it. Start the application from an unrestricted local terminal. This is not an MF
 configuration problem and must not be worked around by disabling verification.
 A successful SMTP DATA response remains accepted if connection shutdown fails;
 unconfirmed sends revoke their codes. Failed staff resends return to sign-in.
+
+
+## Password recovery and residential location
+
+Migration `aea1947e1d7f` adds private password recovery records. Recovery tokens use
+48 random bytes, are stored only as SHA-256 hashes, expire after 15 minutes, and
+can be used once. Requests are limited to one email per account per five minutes;
+existing and unknown accounts receive the same response. A successful reset
+invalidates every existing session and outstanding recovery token. Mail submission
+failure invalidates the attempted token. Recovery does not change the email
+address or bypass legacy authenticator transition requirements.
+
+Public registration accepts `address_line_1`, `city` and `province` and stores them
+in the complainant profile. The portal collects these separately from incident
+location and receiving station. Existing API clients may omit the new fields.

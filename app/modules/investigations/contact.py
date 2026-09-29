@@ -28,7 +28,7 @@ def contact(docket_id: uuid.UUID, db: Session = Depends(get_db), user=Depends(re
     person = db.get(Complainant, complaint.complainant_id)
     result = {key: getattr(person, key) for key in ('first_name', 'last_name', 'phone_number', 'email',
         'address_line_1', 'address_line_2', 'city', 'province', 'postal_code')}
-    svc.audit(user.id, officer.station_id, 'complainant.contact.view', 'complainant', person.id)
+    svc.audit(user.id, officer.station_id, 'complainant.contact.view', 'docket', docket.id)
     db.commit()
     return result
 

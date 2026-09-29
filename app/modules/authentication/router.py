@@ -20,7 +20,7 @@ def register(data: schemas.RegistrationRequest, service: AuthService = Depends(g
     return service.register(data)
 
 
-@router.post('/login', response_model=schemas.LoginResponse)
+@router.post('/login', response_model=schemas.LoginResponse | schemas.TokenResponse)
 def login(data: schemas.LoginRequest, service: AuthService = Depends(get_auth_service)):
     return service.login(data)
 
@@ -71,3 +71,16 @@ def verify_email(data: schemas.MfaLoginVerificationRequest, service: AuthService
 @router.post('/email/resend', response_model=schemas.LoginResponse)
 def resend_email(data: schemas.MfaSetupRequest, service: AuthService = Depends(get_auth_service)):
     return service.resend_email(data.challenge_token.get_secret_value())
+
+
+@router.post('/forgot-password')
+def forgot_password(data: schemas.ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    from app.modules.authentication.recovery import RecoveryService
+    return RecoveryService(db, request.client.host if request.client else None).request_reset(data.email)
+
+
+@router.post('/reset-password')
+def reset_password(data: schemas.ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    from app.modules.authentication.recovery import RecoveryService
+    return RecoveryService(db, request.client.host if request.client else None).reset(
+        data.token.get_secret_value(), data.password.get_secret_value())

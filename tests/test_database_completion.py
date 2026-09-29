@@ -17,7 +17,7 @@ EXPECTED = {
     'CHARGE_OFFICER': 'complaint.register complaint.view_station complaint.decide refusal.record confirmation.download',
     'STATION_COMMANDER': 'complaint.view_station refusal.escalation.view docket.approve docket.assign audit.view_station dashboard.view_station alert.view confirmation.download',
     'INVESTIGATING_OFFICER': 'docket.view_assigned case.update_status case.add_note case.close evidence.manage evidence.view_custody feedback.provide confirmation.download',
-    'SYSTEM_ADMINISTRATOR': 'user.manage role.manage permission.manage station.manage audit.view_all dashboard.view_all alert.view',
+    'SYSTEM_ADMINISTRATOR': 'user.manage audit.view_all',
     'SAPS_MANAGEMENT': 'audit.view_all dashboard.view_all alert.view',
     'NCC_OFFICER': 'refusal.escalation.view dashboard.view_all alert.view',
 }
@@ -29,7 +29,7 @@ class DatabaseCompletionTests(unittest.TestCase):
             rows = conn.execute(select(Role.code, Permission.code).select_from(RolePermission).join(Role).join(Permission)).all()
             expected = {(role, p) for role, permissions in EXPECTED.items() for p in permissions.split()}
             self.assertEqual(set(rows), expected)
-            self.assertEqual(len(rows), 38)
+            self.assertEqual(len(rows), 33)
             self.assertEqual(len(rows), len(set(rows)))
             self.assertFalse(conn.execute(text("SELECT has_function_privilege('saps_api', 'case_mgmt.undo_rbac_seed_1edbbd1f3330()', 'EXECUTE')")).scalar_one())
 

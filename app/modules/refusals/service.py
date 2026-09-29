@@ -102,6 +102,9 @@ class ComplaintDecisionService:
                                 action=f'complaint.decide.{data.decision.lower()}', entity_type='complaint',
                                 entity_id=complaint_id, station_id=officer.station_id))
             notify_complainant(self.db, complaint, f'complaint.{data.decision.lower()}', actor_user_id=user_id)
+            if data.decision == 'REFUSED':
+                from app.modules.communications.case_email import enqueue
+                enqueue(self.db, complaint, None, 'complaint.refused', decision_row.id)
             self.db.commit()
             return result
         except SQLAlchemyError:

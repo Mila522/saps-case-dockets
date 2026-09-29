@@ -155,6 +155,8 @@ class DocketService:
             self.db.flush()
             if data.decision == 'APPROVED':
                 docket.status = 'APPROVED'
+                from app.modules.communications.case_email import enqueue
+                enqueue(self.db, complaint, docket.id, 'docket.approved', approval.id)
                 self.db.add(DocketStatusHistory(
                     docket_id=docket.id, from_status='PENDING_APPROVAL', to_status='APPROVED',
                     changed_by_user_id=user_id, change_reason=data.notes, changed_at=now,

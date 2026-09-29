@@ -60,10 +60,11 @@ registration retains A's existing request/retry behavior; this is not a new
 cross-request idempotency system.
 
 IN_APP delivery is immediate and transactional, so it requires no background
-delivery worker. SMS/email dispatch is not implemented or represented as sent.
-Adding it requires an approved provider, destination encryption, delivery
-idempotency, and retry policy. Read/unread tracking and feedback acknowledgement
-are not added to the existing schema.
+delivery worker. Case EMAIL dispatch now uses a separate transactional outbox
+and SMTP worker; see `case-email-tracking.md` for events, setup and retry rules.
+External delivery failures do not undo case actions. Historical SMS data remains,
+but no SMS is sent. Read/unread tracking and feedback acknowledgement are not
+added to the existing schema.
 
 ## Documents
 

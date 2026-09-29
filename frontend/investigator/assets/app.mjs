@@ -1,3 +1,4 @@
+import {invitations} from './invitations.mjs';
 import {createClient} from '/portal/api.mjs';
 import {escape, link, notice, fieldErrors, data} from './ui.mjs';
 import {queue} from './investigator-dockets.mjs';
@@ -13,15 +14,17 @@ function signIn(message='Sign in with your investigating officer account to see 
   user=null;
   document.querySelector('#identity').textContent='Authorised personnel';
   document.querySelector('#logout').hidden=true;
+  document.querySelector('#invite-navigation').hidden=true;
   view.setAttribute('aria-busy','false');
-  view.innerHTML=`<p class="eyebrow">Investigator workspace</p><h1>Your next step in the investigation.</h1><p class="intro">${escape(message)}</p><div class="panel"><h2>Sign in to your workspace</h2><p>Use the existing staff sign-in with password and email verification.</p>${link('Sign in securely','/officer/?workspace=investigator')}</div>`;
+  view.innerHTML=`<p class="eyebrow">Investigator workspace</p><h1>Your next step in the investigation.</h1><p class="intro">${escape(message)}</p><div class="panel"><h2>Sign in to your workspace</h2><p>Use the existing staff sign-in with your password. New accounts verify their email once.</p>${link('Sign in securely','/officer/?workspace=investigator')}</div>`;
 }
 async function all(path) {
   const rows=[];
   for (let offset=0;;offset+=100) {
     const batch=await api.request(`${path}${path.includes('?')?'&':'?'}limit=100&offset=${offset}`);
-    rows.push(...batch);
-    if(batch.length<100) return rows;
+    const items=Array.isArray(batch)?batch:batch.items;
+    rows.push(...items);
+    if(items.length<100) return rows;
   }
 }
 function render(html,title) {
@@ -68,6 +71,7 @@ async function load() {
   if(location.pathname !== '/investigator/' && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id||'')) throw new Error('Open a record from the assigned docket queue. The record link is invalid.');
   if(location.pathname==='/investigator/docket') await docketDetail(ctx,id);
   else if(location.pathname==='/investigator/evidence') await evidenceDetail(ctx,id);
+  else if(new URLSearchParams(location.search).get('page')==='invite') await invitations(ctx);
   else await queue(ctx);
 }
 document.addEventListener('click',event=>{if(busy && event.target.closest('a')) event.preventDefault();});
@@ -84,6 +88,10 @@ async function initialise() {
   document.querySelector('#identity').textContent=`${user.username} · ${user.roles.map(role=>role.name).join(', ')}`;
   document.querySelector('#logout').hidden=false;
   if(!user.roles.some(role=>role.code==='INVESTIGATING_OFFICER')) throw Object.assign(new Error('Permission denied. An investigating officer account is required.'),{status:403});
+  document.querySelector('#invite-navigation').hidden=!ctx.has('feedback.provide');
+  const inviting=new URLSearchParams(location.search).get('page')==='invite';
+  document.querySelectorAll('.workspace-link').forEach(a=>a.removeAttribute('aria-current'));
+  document.querySelector(inviting?'#invite-navigation':'.workspace-link').setAttribute('aria-current','page');
   await load();
 }
 if(!api.hasSession()) signIn();

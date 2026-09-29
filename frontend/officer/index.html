@@ -6,14 +6,14 @@
   <meta name="description" content="SAPS complaint and docket work queue for charge officers and station commanders.">
   <title>SAPS Case Desk</title>
   <link rel="stylesheet" href="assets/styles.css">
-  <script type="module" src="assets/app.js"></script>
-</head>
+  <script type="module" src="assets/app.js?v=admin-routing-2"></script>
+<link rel="stylesheet" href="/portal/branding.css"></head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <section class="auth-shell" id="auth-view" aria-labelledby="auth-title">
     <div class="auth-brand" aria-hidden="true">
-      <div class="brand-mark">SAPS</div>
+      <div class="brand-mark"><img class="saps-logo" src="/portal/saps-logo.jfif" alt="South African Police Service logo" width="72" height="72">SAPS</div>
       <p>Case Docket Management</p>
       <h1>Clear decisions.<br>Accountable casework.</h1>
       <p class="auth-brand-copy">A secure station workspace for reviewing complaints, handling escalations and progressing digital dockets.</p>
@@ -50,14 +50,14 @@
 
         <div class="message" id="auth-message" role="alert" hidden></div>
       </div>
-      <p class="security-note">Protected system · Password + email verification · Access is station and role scoped</p>
+      <p class="security-note">Protected system · Password sign-in ? One-time account verification · Access is station and role scoped</p>
     </div>
   </section>
 
   <div class="app-shell" id="app-view" hidden>
     <header class="topbar">
       <div class="brand-inline">
-        <span class="brand-mark brand-mark-small">SAPS</span>
+        <span class="brand-mark brand-mark-small"><img class="saps-logo" src="/portal/saps-logo.jfif" alt="South African Police Service logo" width="72" height="72">SAPS</span>
         <div><strong>Case Desk</strong><span>Station operations</span></div>
       </div>
       <div class="topbar-actions">
@@ -76,6 +76,7 @@
           <p>Today’s work</p>
         </div>
         <nav class="nav-list">
+          <button class="nav-item" data-view="management" type="button" hidden><span class="nav-icon" aria-hidden="true">04</span><span>Management overview</span></button>
           <button class="nav-item is-active" data-view="complaints" type="button">
             <span class="nav-icon" aria-hidden="true">01</span><span>Complaint queue</span>
           </button>
@@ -96,6 +97,7 @@
       <main id="main-content" class="main-content" tabindex="-1">
         <div id="global-message" class="message global-message" role="status" aria-live="polite" hidden></div>
 
+        <section class="view" id="management-view" hidden><div class="page-heading"><h1>Management overview</h1><button class="button button-secondary refresh-button" data-refresh="management">Refresh overview</button></div><div id="management-summary" aria-live="polite"></div></section>
         <section class="view is-active" id="complaints-view" aria-labelledby="complaints-title">
           <div class="page-heading">
             <div>
@@ -104,13 +106,6 @@
               <p>Review incoming complaints. Accepting a criminal complaint creates its docket and CAS number automatically.</p>
             </div>
             <div class="actions"><button id="intake-open" class="button button-primary" type="button" hidden>Register walk-in complaint</button><button class="button button-secondary refresh-button" data-refresh="complaints" type="button">Refresh queue</button></div>
-          </div>
-
-          <div class="metric-grid" aria-label="Complaint summary">
-            <article class="metric-card"><span>Awaiting review</span><strong id="metric-submitted">—</strong></article>
-            <article class="metric-card"><span>Under review</span><strong id="metric-review">—</strong></article>
-            <article class="metric-card"><span>Accepted</span><strong id="metric-accepted">—</strong></article>
-            <article class="metric-card"><span>Escalated</span><strong id="metric-escalated">—</strong></article>
           </div>
 
           <article class="surface">
@@ -217,13 +212,13 @@
     <form class="dialog-shell" id="assignment-form">
       <div class="dialog-header"><div><p class="eyebrow">Case allocation</p><h2 id="assignment-dialog-title">Assign investigator</h2></div><button class="icon-button dialog-close" type="button" aria-label="Close dialog">×</button></div>
       <div class="record-summary" id="assignment-summary"></div>
-      <div class="field"><label for="investigator">Investigating officer</label><select id="investigator" required><option value="">Select an active station investigator</option></select></div>
+      <div class="field"><label for="investigator">Investigating officer</label><select id="investigator" required><option value="">Select an available station investigator</option></select></div>
       <div class="field"><label for="assignment-reason">Assignment reason</label><textarea id="assignment-reason" rows="3" maxlength="4000" required></textarea></div>
       <div class="message" id="assignment-message" role="alert" hidden></div>
       <div class="dialog-actions"><button class="button button-quiet dialog-close" type="button">Cancel</button><button class="button button-primary" type="submit">Assign officer</button></div>
     </form>
   </dialog>
-<dialog id="intake-dialog" aria-labelledby="intake-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="intake-title">In-station complaint intake</h2><div id="intake-content"></div></dialog>
-<dialog id="materials-dialog" aria-labelledby="materials-title"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="materials-title">Docket statements and witnesses</h2><div id="materials-content"></div></dialog>
+<dialog id="intake-dialog" aria-labelledby="intake-title"><div class="dialog-shell"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="intake-title">In-station complaint intake</h2><div id="intake-content"></div></div></dialog>
+<dialog id="materials-dialog" aria-labelledby="materials-title"><div class="dialog-shell"><button class="button button-secondary dialog-close" type="button">Close</button><h2 id="materials-title">Docket statements and witnesses</h2><div id="materials-content"></div></div></dialog>
 </body>
 </html>

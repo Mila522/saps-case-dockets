@@ -68,12 +68,14 @@ def test_seeded_station_directory_contains_address_and_locality(auth_context):
 
 
 @pytest.mark.parametrize('category', CRIME_CATEGORIES[:-1] + ('Other: Unlisted incident', 'Other: ' + 'x'*143))
-def test_categories_save_with_station_and_incident_details(auth_context, category):
+def test_categories_save_with_station_and_incident_details(auth_context, category, tmp_path, monkeypatch):
     client, db = auth_context
     headers, _, _ = account(client, db)
     station_id = seed(db)[0]['id']; db.commit()
     data = dict(station_id=station_id, crime_category=category, incident_description='My original statement',
         incident_location='Different incident street', incident_city='Another city', incident_province='Gauteng')
+    if category == 'Vehicle theft':
+        data.update(vehicle_document(client, headers, tmp_path, monkeypatch))
     response = client.post('/api/v1/complaints', headers=headers, json=data)
     assert response.status_code == 201
     saved = db.get(Complaint, uuid.UUID(response.json()['id']))
@@ -100,14 +102,26 @@ def test_missing_station_is_rejected(auth_context):
     assert client.post('/api/v1/complaints', headers=headers, json=data).status_code == 422
 
 
-def test_officer_categories_and_historical_free_text_remain_readable(workflow_context):
+def test_officer_categories_and_historical_free_text_remain_readable(workflow_context, tmp_path, monkeypatch):
     client, db = workflow_context
     station = db.get(Station, uuid.UUID(seed(db)[0]['id'])); db.commit()
     headers, _, _ = officer_account(client, db, 'CHARGE_OFFICER', station)
     for category in (*CRIME_CATEGORIES[:-1], 'Other: Local report'):
-        result = client.post('/api/v1/complaints/in-station', headers=headers, json=walk_in(crime_category=category))
+        data=walk_in(crime_category=category)
+        if category == 'Vehicle theft':
+            data.update(vehicle_document(client, headers, tmp_path, monkeypatch))
+        result = client.post('/api/v1/complaints/in-station', headers=headers, json=data)
         assert result.status_code==201 and result.json()['crime_category']==category
     legacy = complaint_at_station(client, db, station)
     legacy.crime_category = 'Historical free text'; db.commit()
     rows = client.get('/api/v1/complaints/station', headers=headers).json()['items']
     assert next(row for row in rows if row['id']==str(legacy.id))['crime_category']=='Historical free text'
+
+
+def vehicle_document(client, headers, tmp_path, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'evidence_storage_path', tmp_path)
+    response=client.post('/api/v1/complaints/uploads', headers=headers, data={'purpose':'VEHICLE_REGISTRATION'},
+        files={'file':('registration.pdf',b'%PDF-test','application/pdf')})
+    assert response.status_code==201
+    return {'vehicle_number_plate':'ND 123 456','upload_ids':[response.json()['id']]}

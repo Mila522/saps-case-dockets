@@ -40,6 +40,21 @@ These require `refusal.escalation.view`. Station commanders see and mutate only
 `STATION_COMMANDER` records for their own station. NCC officers see and mutate only
 `NCC` records across stations. Resolution requires non-blank notes.
 
+Commanders can also open **Review refusal** in their station complaint queue for
+any REFUSED or ESCALATED complaint, including older ordinary refusals that never
+created an escalation. `GET /complaints/{id}/refusal-review` exposes the current
+refusal reason, officer notes and commander/NCC review status. `POST` takes the
+current `decision_id` and `action` (`ACKNOWLEDGE` or `ESCALATE`); escalation requires
+a nonblank `reason`. These endpoints require an active station commander, an active
+station, the existing escalation permission and same-station ownership.
+
+Acknowledgement creates/reuses the commander review without changing the refusal.
+Escalation creates an NCC record and changes REFUSED to ESCALATED; its reason is
+retained in the audit trail. Existing automatic NCC escalations are reused, not
+duplicated. The complaint lock and decision/target uniqueness serialize retries.
+Resolved reviews are never reopened, and charge-officer decisions remain immutable.
+No migration, reseeding or bulk modification of historic complaints is needed.
+
 ## Commander docket workflow
 
 - `GET /api/v1/dockets/{id}`

@@ -202,3 +202,56 @@ def test_escalation_visibility_and_state_changes_follow_target_scope(workflow_co
                            json={'resolution_notes': 'Commander reviewed the refusal'},
                            headers=commander_headers)
     assert resolved.status_code == 200 and resolved.json()['status'] == 'RESOLVED'
+    review_path = f'/api/v1/complaints/{row.id}/refusal-review'
+    review = client.get(review_path, headers=commander_headers).json()
+    payload = {'decision_id':review['decision_id'],'action':'ACKNOWLEDGE'}
+    assert client.post(review_path, headers=commander_headers, json=payload).status_code == 409
+    forwarded = client.post(review_path, headers=commander_headers, json={
+        **payload,'action':'ESCALATE','reason':'Already escalated automatically'})
+    assert forwarded.status_code == 200
+    assert forwarded.json()['commander_review']['status'] == 'RESOLVED'
+    assert forwarded.json()['ncc_escalation']['id'] == review['ncc_escalation']['id']
+
+
+def test_commander_reviews_ordinary_refusal_and_forwards_once(workflow_context):
+    from sqlalchemy import func, text
+    client, db = workflow_context
+    station = Station(station_code='REVIEW-' + uuid.uuid4().hex[:8], name='Review', province='Test')
+    other = Station(station_code='REVIEW2-' + uuid.uuid4().hex[:8], name='Other', province='Test')
+    db.add_all([station, other]); db.commit()
+    charge, _, _ = officer_account(client, db, 'CHARGE_OFFICER', station)
+    commander, commander_id, _ = officer_account(client, db, 'STATION_COMMANDER', station)
+    outsider, _, _ = officer_account(client, db, 'STATION_COMMANDER', other)
+    ncc, _, _ = officer_account(client, db, 'NCC_OFFICER', other)
+    row = complaint_at_station(client, db, station)
+    reason = db.scalar(select(RefusalReason).where(RefusalReason.code == 'DUPLICATE_COMPLAINT'))
+    decision = client.post(f'/api/v1/complaints/{row.id}/decisions', headers=charge, json={
+        'decision':'REFUSED','refusal_reason_id':str(reason.id),'officer_notes':'Duplicate reference checked'}).json()
+    assert decision['complaint_status'] == 'REFUSED'
+    path = f'/api/v1/complaints/{row.id}/refusal-review'
+    db.execute(text('SET LOCAL ROLE saps_api')); db.commit()
+    assert client.get(path, headers=outsider).status_code == 404
+    assert client.get(path, headers=charge).status_code == 403
+    assert client.get(path, headers=ncc).status_code == 403
+    result = client.get(path, headers=commander)
+    assert result.status_code == 200 and result.json()['commander_review'] is None
+    assert result.json()['officer_notes'] == 'Duplicate reference checked'
+    payload = {'decision_id':decision['id'],'action':'ACKNOWLEDGE'}
+    assert client.post(path, headers=outsider, json=payload).status_code == 404
+    assert client.post(path, headers=commander, json={**payload,'decision_id':str(uuid.uuid4())}).status_code == 409
+    for _ in range(2):
+        result = client.post(path, headers=commander, json=payload)
+        assert result.status_code == 200 and result.json()['commander_review']['status'] == 'ACKNOWLEDGED'
+        assert result.json()['complaint_status'] == 'REFUSED'
+    escalation = {**payload,'action':'ESCALATE','reason':'  '}
+    assert client.post(path, headers=commander, json=escalation).status_code == 422
+    escalation['reason'] = 'Please assess the refusal decision'
+    for _ in range(2):
+        result = client.post(path, headers=commander, json=escalation)
+        assert result.status_code == 200 and result.json()['ncc_escalation']['status'] == 'OPEN'
+        assert result.json()['complaint_status'] == 'ESCALATED'
+    assert db.scalar(select(func.count()).select_from(RefusalEscalation).where(RefusalEscalation.complaint_id == row.id)) == 2
+    assert db.scalar(select(func.count()).select_from(ComplaintDecision).where(ComplaintDecision.complaint_id == row.id)) == 1
+    forwards = db.scalars(select(AuditLog).where(AuditLog.actor_user_id == commander_id, AuditLog.action == 'refusal.escalation.forward')).all()
+    assert len(forwards) == 1 and forwards[0].event_metadata['reason'] == escalation['reason']
+    assert any(item['complaint_id'] == str(row.id) for item in client.get('/api/v1/refusal-escalations', headers=ncc).json())

@@ -10,7 +10,8 @@ resulting access token as `Authorization: Bearer <access_token>`.
   Obtain its UUID from the list response.
 - `POST /api/v1/complaints/track-by-reference` accepts `{"reference_number":"..."}`
   under the same authentication and owner checks. Guessed or non-owned references
-  return the same 404. There is no anonymous reference lookup.
+  return the same 404. Email links open normal sign-in before this owner-scoped
+  tracking flow; see `case-email-tracking.md`. There is no anonymous lookup.
 
 All endpoints require the existing `case.track_own` permission and a complainant
 profile linked to the authenticated user. The client cannot choose an owner.

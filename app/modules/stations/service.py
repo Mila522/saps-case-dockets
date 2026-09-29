@@ -10,6 +10,7 @@ from app.modules.access.models import Role, User, UserRole
 from app.modules.audit.models import AuditLog
 from app.modules.stations.models import Officer
 from app.modules.stations.schemas import InvestigatorOut
+from app.modules.investigations.availability import busy_assignment
 
 
 class StationOfficerService:
@@ -30,7 +31,8 @@ class StationOfficerService:
                 Role, Role.id == UserRole.role_id).where(
                     Officer.station_id == commander.station_id,
                     Officer.is_active.is_(True), User.is_active.is_(True),
-                    Role.code == 'INVESTIGATING_OFFICER').order_by(
+                    Role.code == 'INVESTIGATING_OFFICER',
+                    ~busy_assignment(Officer.id).exists()).order_by(
                         Officer.rank, Officer.service_number)).all()
             self.db.add(AuditLog(actor_type='USER', actor_user_id=user_id,
                                 action='officer.list_station_investigators', entity_type='station',

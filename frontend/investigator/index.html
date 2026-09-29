@@ -7,17 +7,18 @@
   <link rel="stylesheet" href="/officer/assets/styles.css">
   <link rel="stylesheet" href="/investigator/assets/investigator.css">
   <script type="module" src="/investigator/assets/app.mjs"></script>
-</head>
+<link rel="stylesheet" href="/portal/branding.css"></head>
 <body class="investigator">
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="workspace-header">
-    <a class="wordmark" href="/investigator/">CASE DESK <span>Investigator workspace</span></a>
+    <a class="wordmark" href="/investigator/"><img class="saps-logo" src="/portal/saps-logo.jfif" alt="South African Police Service logo" width="72" height="72">SAPS <span>Investigator workspace</span></a>
     <div class="account"><span id="identity">Authorised personnel</span><button id="logout" class="button button-secondary" hidden>Sign out</button></div>
   </header>
   <div class="workspace-layout">
     <aside class="workspace-sidebar">
       <p class="eyebrow">Casework</p>
       <a class="workspace-link" href="/investigator/" aria-current="page">Assigned dockets <span aria-hidden="true">↗</span></a>
+      <a id="invite-navigation" class="workspace-link" href="/investigator/?page=invite" hidden>Invite complainant</a>
       <p class="sidebar-copy">Your assignments.<br>A complete record.</p>
       <p class="sidebar-note">Investigation notes, evidence and custody history are recorded permanently.</p>
       <div class="prototype">PROTOTYPE<br><span>Not an official SAPS product.</span></div>

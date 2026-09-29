@@ -13,6 +13,7 @@ from app.modules.authentication.email_flow import digest
 from app.modules.authentication.models import AuthSession, EmailChallenge, UserEmailAuth, UserMfaMethod
 from auth_mailbox import code_for, messages
 from test_authentication import auth_context, registration, enroll, authorization
+from test_decisions_dockets import workflow_context
 
 
 def begin(client):
@@ -113,7 +114,7 @@ def test_legacy_transition_requires_existing_factor_then_email(auth_context):
     db.refresh(method)
     assert not method.is_active and user.is_verified and db.get(UserEmailAuth, user.id)
     assert client.get('/api/v1/auth/me', headers=authorization(tokens.json())).status_code == 200
-    assert client.post('/api/v1/auth/login', json={'username':data['username'],'password':data['password']}).json()['status'] == 'EMAIL_CODE_REQUIRED'
+    assert client.post('/api/v1/auth/login', json={'username':data['username'],'password':data['password']}).json()['access_token']
 
 
 def test_address_and_purpose_binding(auth_context):
@@ -172,3 +173,70 @@ def test_smtp_adapter_tls_timeout_and_sanitized_failure(monkeypatch):
     with pytest.raises(adapter.MailUnavailable) as error:
         adapter.send_code('recipient@example.invalid', '123456')
     assert str(error.value) == ''
+
+
+@pytest.mark.parametrize('failure',['connect','authentication','data','quit'])
+def test_smtp_confirmation_is_not_confused_with_connection_shutdown(monkeypatch,failure):
+    import importlib.util
+    from pydantic import SecretStr
+    spec=importlib.util.spec_from_file_location('smtp_confirmation_test',mail.__file__)
+    adapter=importlib.util.module_from_spec(spec);spec.loader.exec_module(adapter)
+    for key,value in {'smtp_host':'smtp.example.invalid','smtp_use_starttls':True,
+            'smtp_username':SecretStr('test'),'smtp_password':SecretStr('test'),
+            'email_from':'sender@example.invalid'}.items():
+        monkeypatch.setattr(settings,key,value)
+    smtp=MagicMock();smtp.__enter__.return_value=smtp;smtp.send_message.return_value={}
+    factory=MagicMock(return_value=smtp)
+    if failure=='connect':factory.side_effect=PermissionError('private network detail')
+    if failure=='authentication':smtp.login.side_effect=adapter.smtplib.SMTPAuthenticationError(535,b'private provider detail')
+    if failure=='data':smtp.send_message.side_effect=OSError('private provider detail')
+    if failure=='quit':smtp.__exit__.side_effect=adapter.smtplib.SMTPResponseException(421,b'private provider detail')
+    monkeypatch.setattr(adapter.smtplib,'SMTP',factory)
+    if failure=='quit':
+        # A completed DATA acceptance remains issued even if QUIT fails.
+        adapter.send_code('recipient@example.invalid','123456')
+        smtp.send_message.assert_called_once()
+    else:
+        with pytest.raises(adapter.MailUnavailable) as error:
+            adapter.send_code('recipient@example.invalid','123456')
+        assert str(error.value)==''
+
+
+@pytest.mark.parametrize('role',['CHARGE_OFFICER','STATION_COMMANDER'])
+def test_staff_failed_resend_revokes_old_and_failed_codes_then_recovers(workflow_context,monkeypatch,role):
+    from app.modules.access.models import Role, UserRole
+    from app.modules.stations.models import Officer, Station
+    from auth_mailbox import send
+    client,db=workflow_context
+    data,_,_=enroll(client)
+    user=db.scalar(select(User).where(User.email==data['email']))
+    station=Station(station_code='MAIL-'+uuid.uuid4().hex[:8],name='Test',province='Test')
+    db.add(station);db.flush()
+    db.execute(UserRole.__table__.delete().where(UserRole.user_id==user.id))
+    db.add(UserRole(user_id=user.id,role_id=db.scalar(select(Role.id).where(Role.code==role))))
+    db.add(Officer(user_id=user.id,station_id=station.id,service_number=uuid.uuid4().hex,rank='Test'))
+    db.commit()
+    # Exercise failed delivery while staff account verification is still pending.
+    db.delete(db.get(UserEmailAuth,user.id)); user.is_verified=False; user.mfa_enabled=False; db.commit()
+    credentials={'username':data['username'],'password':data['password']}
+    first=client.post('/api/v1/auth/login',json=credentials)
+    assert first.status_code==200 and first.json()['status']=='EMAIL_CODE_REQUIRED'
+    old_code=code_for(data['email'])
+    attempted=[]
+    def fail(recipient,code):
+        attempted.append(code)  # Memory-only test fixture, never emitted.
+        raise mail.MailUnavailable()
+    monkeypatch.setattr(mail,'send_code',fail)
+    failed=client.post('/api/v1/auth/email/resend',json={'challenge_token':first.json()['challenge_token']})
+    assert failed.status_code==503 and failed.headers['retry-after']=='60'
+    assert 'challenge_token' not in failed.json() and 'access_token' not in failed.json()
+    assert verify(client,first.json(),old_code).status_code==401
+    row=db.scalar(select(EmailChallenge).where(EmailChallenge.user_id==user.id,
+        EmailChallenge.delivery_state=='failed').order_by(EmailChallenge.attempted_at.desc()))
+    assert db.get(AuthSession,row.session_id).revoked_at
+    forged={'challenge_token':security.create_token(user.id,row.session_id,'email_code',timedelta(minutes=5))}
+    assert verify(client,forged,attempted[0]).status_code==401
+    monkeypatch.setattr(mail,'send_code',send)
+    fresh=client.post('/api/v1/auth/login',json=credentials)
+    assert fresh.status_code==200
+    assert verify(client,fresh.json(),code_for(data['email'])).status_code==200

@@ -76,11 +76,13 @@ class InvestigationService:
                             action=action, entity_type=entity_type, entity_id=entity_id))
 
     def transition(self, docket, user_id, status, reason):
-        self.db.add(DocketStatusHistory(docket_id=docket.id, from_status=docket.status,
-            to_status=status, changed_by_user_id=user_id, change_reason=reason, changed_at=utcnow()))
+        history = DocketStatusHistory(docket_id=docket.id, from_status=docket.status,
+            to_status=status, changed_by_user_id=user_id, change_reason=reason, changed_at=utcnow())
+        self.db.add(history)
         docket.status = status
         if status == 'CLOSED':
             docket.closed_at, docket.closure_reason = utcnow(), reason
+        return history
 
     def allowed_statuses(self, user_id, status):
         permissions = set(self.db.scalars(select(Permission.code).join(RolePermission).join(UserRole,
@@ -111,7 +113,9 @@ class InvestigationService:
     @transactional
     def assign(self, user_id, docket_id, data):
         commander, docket = self.scope(user_id, docket_id, commander=True, writable=True)
-        target = self.db.scalar(select(Officer).where(Officer.id == data.investigating_officer_id))
+        # Serialize assignment with administrative role/station/activation changes.
+        target = self.db.scalar(select(Officer).where(Officer.id == data.investigating_officer_id)
+            .with_for_update().execution_options(populate_existing=True))
         if target is None or target.station_id != commander.station_id:
             raise HTTPException(422, 'Select an active investigator at this station')
         self.officer(target.user_id, 'INVESTIGATING_OFFICER')
@@ -119,6 +123,12 @@ class InvestigationService:
             CaseAssignment.docket_id == docket.id, CaseAssignment.unassigned_at.is_(None)))
         if current and current.investigating_officer_id == target.id:
             raise HTTPException(409, 'Investigator is already assigned')
+        # The officer row lock serializes allocations across different dockets.
+        # Recheck after taking it so two commanders cannot allocate the same
+        # free investigator from stale dropdowns at the same time.
+        from app.modules.investigations.availability import busy_assignment
+        if self.db.scalar(busy_assignment(target.id).limit(1)) is not None:
+            raise HTTPException(409, 'This investigator is busy with another unfinished case. Select an available investigator.')
         now = utcnow()
         if current:
             current.unassigned_at, current.unassignment_reason = now, data.reason
@@ -130,6 +140,8 @@ class InvestigationService:
             self.transition(docket, user_id, 'ACTIVE', 'Investigator assigned')
         self.db.flush()
         self.audit(user_id, commander.station_id, 'docket.assign', 'case_assignment', row.id)
+        from app.modules.communications.case_email import enqueue
+        enqueue(self.db, self.db.get(Complaint, docket.complaint_id), docket.id, 'docket.assigned', row.id)
         notify_complainant(self.db, self.db.get(Complaint, docket.complaint_id),
             'docket.assigned', docket_id=docket.id, actor_user_id=user_id)
         return AssignmentOut.model_validate(row)
@@ -213,7 +225,11 @@ class InvestigationService:
                 raise HTTPException(403, 'Case closure permission required')
         if data.status not in self.status_transitions.get(docket.status, ()):
             raise HTTPException(409, 'Invalid investigation status transition')
-        self.transition(docket, user_id, data.status, data.reason)
+        history = self.transition(docket, user_id, data.status, data.reason)
+        self.db.flush()
+        from app.modules.communications.case_email import enqueue
+        enqueue(self.db, self.db.get(Complaint, docket.complaint_id), docket.id,
+            "case." + data.status.lower(), history.id)
         self.audit(user_id, officer.station_id, 'case.update_status', 'docket', docket.id)
         notify_complainant(self.db, self.db.get(Complaint, docket.complaint_id),
             'case.' + data.status.lower(), docket_id=docket.id, actor_user_id=user_id)

@@ -33,6 +33,7 @@ app.mount("/portal", StaticFiles(directory="app/frontend", html=True), name="por
 
 officer_frontend_root = Path(__file__).resolve().parents[1] / 'frontend' / 'officer'
 app.mount('/officer/assets', StaticFiles(directory=officer_frontend_root / 'assets'), name='officer-assets')
+app.mount('/admin', StaticFiles(directory='frontend/admin', html=True), name='administrator-workspace')
 
 
 @app.get('/officer/', include_in_schema=False)
@@ -73,10 +74,15 @@ async def protect_auth_responses(request: Request, call_next):
                                               '/api/v1/investigations', '/api/v1/evidence',
                                               '/api/v1/notifications', '/api/v1/documents',
                                               '/api/v1/alerts', '/api/v1/dashboards',
-                                              '/api/v1/stations'))
+                                              '/api/v1/stations', '/api/v1/case-email', '/api/v1/admin'))
     if settings.environment == 'production' and protected and request.url.scheme != 'https':
         return JSONResponse(status_code=400, content={'detail': 'HTTPS is required'}, headers={'Cache-Control': 'no-store'})
     response = await call_next(request)
+    if request.url.path == '/admin' or request.url.path.startswith('/admin/'):
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Content-Security-Policy'] = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
     if protected:
         response.headers['Cache-Control'] = 'no-store'
         response.headers['Pragma'] = 'no-cache'

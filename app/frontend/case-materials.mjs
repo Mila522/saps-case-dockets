@@ -1,3 +1,4 @@
+import {mountSubmissionExtras, mountUploads} from './submission-extras.mjs';
 import {categoryChoices, bindCrimeCategory, complaintPayload, stationLabel, stationAddress} from './complaint-fields.mjs';
 // Shared A/C dossier forms. The caller supplies its existing authenticated client.
 import {escape as e, date} from '/investigator/assets/ui.mjs';
@@ -50,6 +51,7 @@ export async function mountMaterials(parent,complaintId,request,{initialEvidence
     ${current.initial_evidence.length?`<h3>Initial evidence</h3>${current.initial_evidence.map(item=>`<p>${e(item.evidence_reference)} · ${e(item.title)} · ${e(item.current_storage_location)}</p>`).join('')}` : ''}
     ${current.can_append?actionForm('statement','Append complainant statement / correction',statementFields(prefix+'statement-'))+actionForm('witness','Record a witness',witnessFields(prefix+'witness-')):''}
     ${current.can_append&&initialEvidence?actionForm('evidence','Register initial evidence',input(prefix+'ev-','title','Evidence title')+input(prefix+'ev-','description','Evidence description',{type:'textarea',max:20000})+input(prefix+'ev-','evidence_type','Type',{choices:EVIDENCE_TYPES})+input(prefix+'ev-','format','Format',{choices:['PHYSICAL','DIGITAL']})+input(prefix+'ev-','storage_location','Current secure location')+input(prefix+'ev-','collection_location','Collection location (optional)',{required:false,max:4000})):''}`;
+  const uploads=document.createElement('section');parent.append(uploads);
   const result=message(parent);
   const save=async(url,payload)=>{
     const saved=await request(url,{method:'POST',body:payload});
@@ -64,20 +66,34 @@ export async function mountMaterials(parent,complaintId,request,{initialEvidence
     const witness=current.witnesses.find(w=>kind==='witness-'+w.id);
     return save(`${path}/witnesses/${witness.id}/statements`,{...values,expected_version:witness.statements.at(-1)?.statement_version||0});
   },result);
+  void mountUploads(uploads,complaintId,request).catch(error=>{uploads.textContent=error.message;});
 }
 
 export function mountWalkIn(parent,request,onCreated) {
   const p='walk-in-'+(++sequence)+'-';
-  parent.innerHTML=`<p>This creates a new walk-in complainant record, without linking or taking over an online account. The receiving station and officer come from your signed-in profile.</p><form class="form-stack">${input(p,'first_name','Complainant first name',{max:100})}${input(p,'last_name','Complainant last name',{max:100})}${input(p,'phone_number','Complainant phone',{type:'tel',max:30})}${input(p,'email','Complainant email (optional)',{type:'email',required:false,max:254})}${input(p,'crime_category','Crime category',{choices:categoryChoices})}${input(p,'incident_description','Complainant statement: what happened?',{type:'textarea',max:20000})}${input(p,'incident_location','Incident location')}${input(p,'incident_city','Incident city (optional)',{required:false,max:150})}${input(p,'incident_province','Incident province',{max:100})}<div class="field"><label for="${p}confirmed"><input id="${p}confirmed" type="checkbox" required> I have confirmed these details with the complainant.</label></div><p>Record actual witnesses after saving. Initial evidence can be registered after acceptance creates the docket. Missing witnesses or evidence must not be invented.</p><button class="button button-primary" type="submit">Register in-station complaint</button></form>`;
+  parent.innerHTML=`<p>For email updates and online tracking, help the complainant register and verify at the complainant portal first. Request their consent code below to link this complaint. Without consent, intake remains unlinked and no case emails are sent.</p><form class="form-stack">${input(p,'first_name','Complainant first name',{max:100})}${input(p,'last_name','Complainant last name',{max:100})}${input(p,'phone_number','Complainant phone',{type:'tel',max:30})}${input(p,'email','Complainant email (optional)',{type:'email',required:false,max:254})}${input(p,'address_line_1','Complainant residential address (optional)',{required:false})}${input(p,'city','Complainant city (optional)',{required:false,max:150})}${input(p,'province','Complainant province (optional)',{required:false,max:100})}<p><a href='/portal/' target='_blank' rel='noopener'>Open complainant registration / sign-in</a></p><button type='button' data-consent>Request account-link consent code</button>${input(p,'email_consent_code','Account-link consent code (optional)',{required:false,max:6})}<p>With consent, the supplied phone and residential address will be saved to the complainant account. The residential address is separate from the incident location.</p>${input(p,'crime_category','Crime category',{choices:categoryChoices})}${input(p,'incident_description','Complainant statement: what happened?',{type:'textarea',max:20000})}${input(p,'incident_location','Incident location')}${input(p,'incident_city','Incident city (optional)',{required:false,max:150})}${input(p,'incident_province','Incident province',{max:100})}<div class="field"><label for="${p}confirmed"><input id="${p}confirmed" type="checkbox" required> I have confirmed these details with the complainant.</label></div><p>Add any actual witnesses and supporting files below. Physical evidence can be registered after acceptance creates the docket.</p><button class="button button-primary" type="submit">Register in-station complaint</button></form>`;
   const notice=message(parent);
   const form=parent.querySelector('form');
+  const collectExtras=mountSubmissionExtras(form,request);
   const stationField=document.createElement('div');
   stationField.innerHTML=input(p,'station_id','Receiving station',{choices:[['','Loading your assigned station…']]})+`<p id="${p}station-address">Only your active assigned station is available.</p>`;
   form.prepend(stationField);
   const stationSelect=form.querySelector('[name=station_id]');
   const submit=form.querySelector('[type=submit]');
   stationSelect.disabled=true;submit.disabled=true;
-  let ready=false;
+  let ready=false,consentId=null,consentEmail=null;
+  const consentButton=form.querySelector('[data-consent]');
+  consentButton.onclick=async()=>{
+    const email=form.querySelector('[name=email]').value.trim();
+    if(!email){notice.textContent='Enter the verified account email first.';return;}
+    consentButton.disabled=true;
+    try {
+      const response=await request('/complaints/in-station/email-consent',{method:'POST',body:{email}});
+      consentId=response.challenge_id;consentEmail=email;
+      notice.textContent=response.message;
+    }catch(error){notice.textContent=error.message;}
+    finally {setTimeout(()=>{consentButton.disabled=false;},60000);}
+  };
   void request('/complaints/in-station/receiving-station').then(station=>{
     stationSelect.innerHTML=`<option value="${e(station.id)}">${e(stationLabel(station))}</option>`;
     stationField.querySelector('p').textContent=`Assigned receiving station: ${stationAddress(station)}`;
@@ -86,9 +102,11 @@ export function mountWalkIn(parent,request,onCreated) {
   bindCrimeCategory(parent.querySelector('form'));
   bind(parent.querySelector('form'),async values=>{
     if(!ready) throw new Error('Your active receiving station must load before registration.');
-    values = complaintPayload(values);
-    const {first_name,last_name,phone_number,email,...incident}=values;
-    const result=await request('/complaints/in-station',{method:'POST',body:{...incident,complainant:{first_name,last_name,phone_number,...(email?{email}:{})},details_confirmed_with_complainant:true}});
-    await onCreated(result);
+    values = {...complaintPayload(values),...await collectExtras()};
+    const {first_name,last_name,phone_number,email,address_line_1,city,province,email_consent_code,...incident}=values;
+    if(email_consent_code && (!consentId||consentEmail!==email)) throw new Error('Request a consent code for this email first.');
+    if(email_consent_code) Object.assign(incident,{email_consent_id:consentId,email_consent_code});
+    const result=await request('/complaints/in-station',{method:'POST',body:{...incident,complainant:{first_name,last_name,phone_number,...(email?{email}:{}),...(address_line_1?{address_line_1}:{}),...(city?{city}:{}),...(province?{province}:{})},details_confirmed_with_complainant:true}});
+    await onCreated(result,Boolean(email_consent_code));
   },notice);
 }

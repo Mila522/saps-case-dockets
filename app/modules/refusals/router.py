@@ -10,8 +10,10 @@ from app.modules.refusals.schemas import (ComplaintDecisionOut, ComplaintDecisio
                                           EscalationResolutionRequest, RefusalEscalationOut,
                                           RefusalReasonOut)
 from app.modules.refusals.service import ComplaintDecisionService, RefusalService
+from app.modules.refusals.commander_review import router as commander_review_router
 
 router = APIRouter(tags=['Refusals'])
+router.include_router(commander_review_router)
 
 
 def get_decision_service(db: Session = Depends(get_db)) -> ComplaintDecisionService:

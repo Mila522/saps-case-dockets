@@ -1,5 +1,6 @@
 """Explicit local demo password recovery; passwords only appear in the user's terminal."""
 import sys
+import argparse
 
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,12 +16,15 @@ from app.modules.stations import seed_demo_officers as demo
 ACTION = 'auth.demo_officer_password_reset'
 
 
-def reset_passwords(db):
-    """Caller commits all three resets together. Never log or persist plaintext."""
+def reset_passwords(db, username=None):
+    """Caller commits selected resets together. Never log or persist plaintext."""
     demo.ensure_local()
+    specs = [spec for spec in demo.SPECS if username is None or spec[0] == username]
+    if not specs:
+        raise ValueError('Unknown demo account; no passwords reset.')
     db.execute(text('SELECT pg_advisory_xact_lock(78432019)'))
     accounts = []
-    for spec in demo.SPECS:
+    for spec in specs:
         user = db.scalar(select(User).where(User.username == spec[0]).with_for_update())
         officer = db.scalar(select(Officer).where(Officer.user_id == user.id)) if user else None
         station = db.get(Station, officer.station_id) if officer else None
@@ -45,13 +49,17 @@ def reset_passwords(db):
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Reset local demo passwords; keep email verification enabled.')
+    parser.add_argument('--username', choices=[spec[0] for spec in demo.SPECS],
+        help='Reset only this demo account. Omitting this option resets all demo officers.')
+    args = parser.parse_args()
     try:
         demo.ensure_local()
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             raise ValueError('Run directly in a local interactive terminal without redirection or transcripts.')
         with SessionLocal() as db:
             with db.begin():
-                results = reset_passwords(db)
+                results = reset_passwords(db, args.username)
         print('Passwords reset. Save these now; they are not stored in plaintext. Email codes remain required.')
         for result in results:
             print(f'\n{result.username} | {result.role} | {result.station}')

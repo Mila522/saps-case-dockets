@@ -209,3 +209,17 @@ dialog::backdrop { background: rgba(7,24,39,.65); backdrop-filter: blur(2px); }
   .escalation-card .actions { justify-content: flex-start; }
 }
 #mfa-form #resend-code{min-height:44px;width:100%;border:1px solid var(--line,#cbd5df);border-radius:8px;padding:10px 16px;text-align:center}#mfa-form button:disabled{cursor:not-allowed;opacity:.6}#mfa-code{letter-spacing:.25em;font-size:1.1rem}
+
+/* Keep modal content centered and readable, including shared intake forms. */
+dialog { margin: auto; overflow-y: auto; overflow-x: hidden; }
+.dialog-shell, .dialog-shell > *, .dialog-header > * { min-width: 0; }
+.dialog-shell { line-height: 1.55; overflow-wrap: anywhere; }
+.dialog-shell .form-stack { width: 100%; max-width: none; }
+.dialog-shell input, .dialog-shell select, .dialog-shell textarea { max-width: 100%; min-width: 0; }
+.dialog-actions { flex-wrap: wrap; }
+.record-summary > section { grid-column: 1 / -1; }
+@media (max-width: 600px) {
+  dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .dialog-shell { padding: 18px; }
+  .record-summary { grid-template-columns: minmax(0,1fr); }
+}

@@ -177,10 +177,8 @@ def test_login_email_replay_and_current_user(auth_context):
     assert user['complainant_id'] and user['officer_id'] is None
     assert not {'password_hash','secret_encrypted','refresh_token_hash'} & set(user)
     login = client.post('/api/v1/auth/login', json={'username':data['email'].upper(),'password':data['password']})
-    assert login.status_code == 200 and login.json()['status'] == 'EMAIL_CODE_REQUIRED'
-    payload = {'challenge_token':login.json()['challenge_token'],'code':code_for(data['email'])}
-    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 200
-    assert client.post('/api/v1/auth/email/verify', json=payload).status_code == 401
+    assert login.status_code == 200 and login.json()['access_token']
+    assert client.get('/api/v1/auth/me', headers=authorization(login.json())).status_code == 200
 
 
 def test_password_lockout_and_generic_failures(auth_context):
@@ -203,7 +201,8 @@ def test_password_lockout_and_generic_failures(auth_context):
 
 def test_mfa_lockout_cannot_be_reset_by_password_success(auth_context):
     client, db = auth_context
-    data, setup, _ = enroll(client)
+    data = registration()
+    assert client.post('/api/v1/auth/register', json=data).status_code == 201
     for _ in range(settings.max_failed_login_attempts):
         login = client.post('/api/v1/auth/login', json={'username': data['username'], 'password': data['password']})
         assert login.status_code == 200

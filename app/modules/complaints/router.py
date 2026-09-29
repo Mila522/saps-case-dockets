@@ -70,6 +70,24 @@ def track_reference(data: ReferenceTrackingRequest, user: User = Depends(require
     return service.track(user.id, reference_number=data.reference_number)
 
 
+@router.get('/{complaint_id}/updates')
+def own_updates(complaint_id: uuid.UUID, user: User = Depends(require_permission('case.track_own')),
+                db: Session = Depends(get_db)):
+    from sqlalchemy import select
+    from app.modules.dockets.models import Docket
+    from app.modules.feedback.service import FeedbackService
+    from app.modules.authentication.security import utcnow
+    ComplaintTrackingService(db).track(user.id, complaint_id=complaint_id)
+    docket = db.scalar(select(Docket).where(Docket.complaint_id == complaint_id))
+    if docket is None:
+        return {'docket_status': None, 'feedback': []}
+    page = FeedbackService(db).list(user, docket.id)
+    superseded = {row.supersedes_feedback_id for row in page.items if row.supersedes_feedback_id}
+    return {'docket_status': docket.status, 'feedback': [
+        {'subject': row.subject, 'message': row.message, 'published_at': row.published_at} for row in page.items
+        if row.is_official and row.published_at <= utcnow() and row.id not in superseded]}
+
+
 @router.get('/{complaint_id}/materials', response_model=ComplaintMaterialOut)
 def materials(complaint_id: uuid.UUID, user: User = Depends(get_current_active_user),
               service: ComplaintIntakeService = Depends(get_intake_service)):

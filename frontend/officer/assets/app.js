@@ -1,8 +1,11 @@
+import {mountFullDocket, mountComplaintDossier} from './full-docket.mjs';
 import {mountWalkIn, mountMaterials} from '/portal/case-materials.mjs';
-import {staffWorkspace} from './workspace.mjs';
+import {staffWorkspace} from './workspace.mjs?v=admin-routing-2';
 import {stationLabel} from '/portal/complaint-fields.mjs';
+import {mountEmailStatus} from '/portal/case-email-ui.mjs';
+import {mountRefusalReview} from './refusal-review.mjs';
 const API = '/api/v1';
-const dossierRequest=(path,options={})=>request(path,{...options,...(options.body?{body:JSON.stringify(options.body)}:{})});
+const dossierRequest=(path,options={})=>request(path,{...options,...(options.body && !(options.body instanceof FormData)?{body:JSON.stringify(options.body)}:{})});
 if (new URLSearchParams(location.search).get('workspace') === 'investigator') {
   document.documentElement.classList.add('investigator-signin');
   document.title = 'Investigator sign-in · Case Desk prototype';
@@ -97,7 +100,7 @@ async function request(path, options = {}, retry = true) {
     throw error;
   }
   if (response.status === 204) return null;
-  return response.json();
+  return options.binary ? response.blob() : response.json();
 }
 
 async function refreshSession() {
@@ -151,16 +154,20 @@ async function enterApplication() {
   state.user = await request('/auth/me');
   const roles = state.user.roles.map(role => role.code);
   const permissions = new Set(state.user.permissions.map(permission => permission.code));
+  $('#complaint-status').innerHTML = (roles.includes('STATION_COMMANDER')
+    ? [['','All statuses'],['SUBMITTED','Submitted'],['UNDER_REVIEW','Under review'],['ACCEPTED','Accepted'],['REFUSED','Refused'],['ESCALATED','Escalated'],['DOCKET_CREATED','Docket created']]
+    : [['SUBMITTED','Submitted'],['DOCKET_CREATED','Docket created']])
+    .map(([value,text])=>`<option value="${value}">${text}</option>`).join('');
   $('#intake-open').hidden = !roles.includes('CHARGE_OFFICER') || !permissions.has('complaint.register');
   const destination=staffWorkspace(state.user);
-  if(destination==='/investigator/') {
+  if(destination==='/investigator/' || destination==='/admin/') {
     location.replace(destination);
     return;
   }
   if (!destination) {
     clearSession();
     showAuth();
-    showMessage($('#auth-message'), 'This workspace is limited to charge officers, station commanders and NCC escalation officers.');
+    showMessage($('#auth-message'), 'Staff access requires an authorized charge officer, station commander, investigating officer, NCC officer, SAPS management or system administrator role and its workspace permissions.');
     return;
   }
   $('#auth-view').hidden = true;
@@ -169,6 +176,7 @@ async function enterApplication() {
   $('#user-role').textContent = roles.map(label).join(' · ');
 
   const access = {
+    management: roles.includes('SAPS_MANAGEMENT') && permissions.has('dashboard.view_all'),
     complaints: permissions.has('complaint.view_station'),
     escalations: permissions.has('refusal.escalation.view'),
     dockets: permissions.has('docket.approve'),
@@ -177,6 +185,7 @@ async function enterApplication() {
   const firstView = Object.keys(access).find(view => access[view]);
   if (firstView) switchView(firstView);
   await Promise.all([
+    access.management ? loadManagement() : Promise.resolve(),
     access.complaints ? loadComplaints() : Promise.resolve(),
     permissions.has('complaint.decide') ? loadReasons() : Promise.resolve(),
     access.escalations ? loadEscalations() : Promise.resolve(),
@@ -199,7 +208,8 @@ async function handleLogin(event) {
       }),
     });
     $('#password').value = '';
-    showChallenge(result);
+    if (result.access_token) { setTokens(result); await enterApplication(); }
+    else showChallenge(result);
   } catch (error) {
     showMessage($('#auth-message'), error.message);
   } finally {
@@ -260,7 +270,10 @@ $('#resend-code').addEventListener('click', async () => {
     showMessage($('#auth-message'), 'A new code was submitted. Check your inbox or spam folder and use the newest code.', true);
   } catch(error) {
     if (error.retryAfter) state.resendReadyAt = Date.now() + error.retryAfter * 1000;
-    if (error.status === 401 || error.status === 503) state.resendUnavailable = true;
+    if (error.status === 401 || error.status === 503) {
+      $('#mfa-code').value = '';
+      setAuthStep('login'); // A failed resend revoked this challenge; do not offer verification.
+    }
     showMessage($('#auth-message'), error.message);
   } finally { state.authBusy = false; updateVerificationButtons(); }
 });
@@ -284,6 +297,16 @@ function switchView(view) {
   $('#main-content').focus();
 }
 
+async function loadManagement() {
+  const panel = $('#management-summary'); panel.textContent = 'Loading overview...';
+  try {
+    const summary = await request('/dashboards/summary');
+    panel.innerHTML = `<p>All stations - ${escapeHtml(formatDate(summary.generated_at))}</p><p><strong>Unassigned open dockets: ${escapeHtml(summary.unassigned_open_dockets)}</strong></p>` +
+      ['complaints_by_status','dockets_by_status','alerts_by_status','escalations_by_status'].map(key =>
+        `<section class="card"><h2>${escapeHtml(label(key.replace('_by_status','')))}</h2>${Object.entries(summary[key]).map(([status,count])=>`<p>${escapeHtml(label(status))}: <strong>${escapeHtml(count)}</strong></p>`).join('') || '<p>No records.</p>'}</section>`).join('');
+  } catch(error) { panel.textContent = error.message; }
+}
+
 async function loadComplaints() {
   try {
     const page = await request('/complaints/station?limit=100');
@@ -298,16 +321,11 @@ function renderComplaints() {
   const filter = $('#complaint-status').value;
   const rows = state.complaints.filter(row => !filter || row.status === filter);
   $('#complaint-result-count').textContent = `${rows.length} complaint${rows.length === 1 ? '' : 's'} shown`;
-  const counts = Object.fromEntries(['SUBMITTED', 'UNDER_REVIEW', 'ACCEPTED', 'ESCALATED'].map(status => [status, state.complaints.filter(row => row.status === status).length]));
-  $('#metric-submitted').textContent = counts.SUBMITTED;
-  $('#metric-review').textContent = counts.UNDER_REVIEW;
-  $('#metric-accepted').textContent = counts.ACCEPTED + state.complaints.filter(row=>row.status==='DOCKET_CREATED').length;
-  $('#metric-escalated').textContent = counts.ESCALATED;
   $('#complaint-empty').hidden = rows.length !== 0;
   $('#complaint-table').innerHTML = rows.map(row => {
     const canDecide=state.user.roles.some(role=>role.code==='CHARGE_OFFICER') && state.user.permissions.some(permission=>permission.code==='complaint.decide');
     const action = !canDecide
-      ? `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">View</button>`
+      ? `<button class="button button-secondary button-small" data-complaint-action="view" data-id="${row.id}">${state.user.roles.some(role=>role.code==='STATION_COMMANDER') && ['REFUSED','ESCALATED'].includes(row.status)?'Review refusal':'View'}</button>`
       : row.status === 'SUBMITTED'
       ? `<button class="button button-primary button-small" data-complaint-action="start" data-id="${row.id}">Start review</button>`
       : row.status === 'UNDER_REVIEW'
@@ -320,7 +338,7 @@ function renderComplaints() {
       <td>${escapeHtml(row.crime_category)}<span class="subtext">${escapeHtml(row.incident_city || row.incident_province)}</span></td>
       <td>${escapeHtml(formatDate(row.submitted_at))}</td>
       <td>${statusBadge(row.status)}</td>
-      <td><div class="actions">${action}<button class="button button-secondary button-small" data-complaint-action="materials" data-id="${row.id}">Statements and witnesses</button></div></td>
+      <td><div class="actions">${action}<button class="button button-secondary button-small" data-complaint-action="full" data-id="${row.id}">Complete case record</button>${state.user.roles.some(role=>role.code==='STATION_COMMANDER')?'':`<button class="button button-secondary button-small" data-complaint-action="materials" data-id="${row.id}">Statements and witnesses</button>`}</div></td>
     </tr>`;
   }).join('');
 }
@@ -349,6 +367,15 @@ function complaintSummary(row) {
 function openComplaintDialog(row, readOnly = false) {
   state.activeComplaint = row;
   $('#complaint-summary').innerHTML = complaintSummary(row);
+  if(state.user.roles.some(role=>role.code==='STATION_COMMANDER') && ['REFUSED','ESCALATED'].includes(row.status)) {
+    const reviewPanel=document.createElement('section');reviewPanel.id='commander-refusal-review';
+    $('#complaint-summary').append(reviewPanel);
+    void mountRefusalReview(reviewPanel,dossierRequest,row.id,async()=>{await Promise.all([loadComplaints(),loadEscalations()]);});
+  }
+  if(state.user.roles.some(role=>['CHARGE_OFFICER','STATION_COMMANDER'].includes(role.code))) {
+    const emailPanel=document.createElement('section');$('#complaint-summary').append(emailPanel);
+    void mountEmailStatus(emailPanel,dossierRequest,row.id);
+  }
   $('#complaint-dialog-title').textContent = readOnly ? 'Complaint details' : 'Record complaint decision';
   $('#decision-choice').hidden = readOnly;
   $('#refusal-fields').hidden = true;
@@ -356,6 +383,11 @@ function openComplaintDialog(row, readOnly = false) {
   clearMessage($('#complaint-dialog-message'));
   $('#complaint-action-form').reset();
   $('#complaint-dialog').showModal();
+  const dossier=document.createElement('div');$('#complaint-summary').append(dossier);
+  $('#complaint-submit').disabled=true;
+  void mountComplaintDossier(dossier,row.id,dossierRequest).then(()=>{
+    if(state.activeComplaint.id===row.id)$('#complaint-submit').disabled=false;
+  }).catch(error=>{dossier.textContent=error.message;});
 }
 
 async function complaintAction(button) {
@@ -372,6 +404,10 @@ async function complaintAction(button) {
       openComplaintDialog(row);
     } else if (button.dataset.complaintAction === 'view') {
       openComplaintDialog(row, true);
+    } else if (button.dataset.complaintAction === 'full') {
+      $('#materials-title').textContent='Complete case record';
+      $('#materials-dialog').showModal();
+      await mountComplaintDossier($('#materials-content'),row.id,dossierRequest);
     } else if (button.dataset.complaintAction === 'materials') {
       $('#materials-dialog').showModal();
       await mountMaterials($('#materials-content'),row.id,dossierRequest,{initialEvidence:Boolean(row.docket_id)});
@@ -450,7 +486,7 @@ function renderEscalations() {
     const actions = row.status === 'OPEN'
       ? `<button class="button button-secondary button-small" data-escalation-action="acknowledge" data-id="${row.id}">Acknowledge</button><button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>`
       : row.status === 'ACKNOWLEDGED'
-        ? `<button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>` : '';
+        ? `<span class="muted">Already acknowledged.</span><button class="button button-primary button-small" data-escalation-action="resolve" data-id="${row.id}">Resolve</button>` : '<p class="muted">This escalation is resolved. No further acknowledgement or resolution is needed.</p>';
     return `<article class="escalation-card">
       <div><h3>Complaint ${escapeHtml(row.complaint_id)}</h3><div class="escalation-meta"><span>${statusBadge(row.status)}</span><span>${escapeHtml(label(row.target))}</span><span>Escalated ${escapeHtml(formatDate(row.escalated_at))}</span></div>${row.resolution_notes ? `<p>${escapeHtml(row.resolution_notes)}</p>` : ''}</div>
       <div class="actions">${actions}</div>
@@ -519,7 +555,7 @@ function renderDockets() {
       : row.status === 'APPROVED'
         ? `<button class="button button-gold button-small" data-docket-action="assign" data-id="${row.id}">Assign investigator</button>`
         : `<button class="button button-secondary button-small" data-docket-action="view" data-id="${row.id}">View</button>`;
-    return `<tr><td><span class="reference">${escapeHtml(row.cas_number)}</span></td><td><span class="reference">${escapeHtml(row.complaint_id)}</span></td><td>${escapeHtml(formatDate(row.opened_at))}</td><td>${statusBadge(row.status)}</td><td><div class="actions">${actions}<button class="button button-secondary button-small" data-docket-action="materials" data-id="${row.id}">Statements and witnesses</button></div></td></tr>`;
+    return `<tr><td><span class="reference">${escapeHtml(row.cas_number)}</span></td><td><span class="reference">${escapeHtml(row.complaint_id)}</span></td><td>${escapeHtml(formatDate(row.opened_at))}</td><td>${statusBadge(row.status)}</td><td><div class="actions">${actions}<button class="button button-secondary button-small" data-docket-action="full" data-id="${row.id}">View full docket</button></div></td></tr>`;
   }).join('');
 }
 
@@ -531,6 +567,13 @@ async function docketAction(button) {
   const row = state.dockets.find(item => item.id === button.dataset.id);
   if (!row) return;
   state.activeDocket = row;
+  if (button.dataset.docketAction === 'full') {
+    $('#materials-title').textContent='Full docket';
+    $('#materials-dialog').showModal();
+    try { await mountFullDocket($('#materials-content'),row.id,dossierRequest); }
+    catch(error) { $('#materials-content').textContent=error.message; }
+    return;
+  }
   if (button.dataset.docketAction === 'materials') {
     $('#materials-dialog').showModal();
     await mountMaterials($('#materials-content'),row.complaint_id,dossierRequest);
@@ -538,9 +581,16 @@ async function docketAction(button) {
   }
   if (button.dataset.docketAction === 'assign') {
     $('#assignment-form').reset();
-    $('#assignment-summary').innerHTML = docketSummary(row);
+    $('#assignment-summary').textContent='Loading complete case record...';
+    $('#assignment-form button[type=submit]').disabled=true;
+    $('#investigator').disabled=true;
     clearMessage($('#assignment-message'));
     $('#assignment-dialog').showModal();
+    const submit=$('#assignment-form button[type=submit]');
+    try {
+      await mountFullDocket($('#assignment-summary'),row.id,dossierRequest);
+      if(state.activeDocket.id===row.id)await loadInvestigators();
+    } catch(error) {submit.disabled=true;showMessage($('#assignment-message'),error.message);}
   } else {
     $('#docket-action-form').reset();
     $('#docket-summary').innerHTML = docketSummary(row);
@@ -548,6 +598,11 @@ async function docketAction(button) {
     $$('.choice-group, #docket-notes-field, #docket-action-form .dialog-actions .button-primary', $('#docket-dialog')).forEach(element => { element.hidden = button.dataset.docketAction === 'view'; });
     clearMessage($('#docket-dialog-message'));
     $('#docket-dialog').showModal();
+    const submit=$('#docket-action-form button[type=submit]');submit.disabled=true;
+    try {
+      await mountFullDocket($('#docket-summary'),row.id,dossierRequest);
+      if(state.activeDocket.id===row.id)submit.disabled=false;
+    } catch(error) {showMessage($('#docket-dialog-message'),error.message);}
   }
 }
 
@@ -580,12 +635,23 @@ async function submitDocketDecision(event) {
 }
 
 async function loadInvestigators() {
+  const select = $('#investigator');
+  const submit = $('#assignment-form button[type=submit]');
+  select.disabled = true; submit.disabled = true;
+  state.investigators = [];
+  select.innerHTML = '<option value="">Loading available investigators...</option>';
   try {
     state.investigators = await request('/stations/investigators');
-    $('#investigator').innerHTML = '<option value="">Select an active station investigator</option>' + state.investigators.map(officer =>
-      `<option value="${officer.id}">${escapeHtml(officer.rank)} · ${escapeHtml(officer.service_number)} (${escapeHtml(officer.username)})</option>`).join('');
+    select.innerHTML = '<option value="">' + (state.investigators.length ? 'Select an available station investigator' : 'No investigators are currently available') + '</option>' + state.investigators.map(officer =>
+      `<option value="${officer.id}">${escapeHtml(officer.rank)} - ${escapeHtml(officer.service_number)} (${escapeHtml(officer.username)})</option>`).join('');
+    if (!state.investigators.length && $('#assignment-dialog').open) showMessage($('#assignment-message'), 'All station investigators are busy or unavailable. Try again after a case is closed or an investigator is unassigned.');
   } catch (error) {
-    globalMessage(error.message);
+    select.innerHTML = '<option value="">Available investigators could not be loaded</option>';
+    if ($('#assignment-dialog').open) showMessage($('#assignment-message'), error.message);
+    else globalMessage(error.message);
+  } finally {
+    select.disabled = !state.investigators.length;
+    submit.disabled = !state.investigators.length;
   }
 }
 
@@ -603,20 +669,21 @@ async function submitAssignment(event) {
     });
     $('#assignment-dialog').close();
     globalMessage(`Investigator assigned to ${state.activeDocket.cas_number}.`, true);
-    await loadDockets();
+    await Promise.all([loadDockets(), loadInvestigators()]);
   } catch (error) {
+    await loadInvestigators();
     showMessage($('#assignment-message'), error.message);
   } finally {
-    button.disabled = false;
+    button.disabled = !state.investigators.length;
   }
 }
 
 function bindEvents() {
   $('#intake-open').onclick=()=>{
-    mountWalkIn($('#intake-content'),dossierRequest,async row=>{
+    mountWalkIn($('#intake-content'),dossierRequest,async (row,linked)=>{
       $('#intake-dialog').close();
       await loadComplaints();
-      globalMessage(`In-station complaint registered: ${row.reference_number}`,true);
+      globalMessage(`In-station complaint registered: ${row.reference_number}. ${linked?'Email updates are queued for the verified account.':'Email updates were not sent: the walk-in email is unverified.'}`,true);
     });
     $('#intake-dialog').showModal();
   };
@@ -625,7 +692,7 @@ function bindEvents() {
   $$('.back-auth').forEach(button => button.addEventListener('click', () => setAuthStep('login')));
   $('#logout-button').addEventListener('click', logout);
   $$('.nav-item').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
-  $$('.refresh-button').forEach(button => button.addEventListener('click', () => ({ complaints: loadComplaints, escalations: loadEscalations, dockets: loadDockets }[button.dataset.refresh])()));
+  $$('.refresh-button').forEach(button => button.addEventListener('click', () => ({ management: loadManagement, complaints: loadComplaints, escalations: loadEscalations, dockets: loadDockets }[button.dataset.refresh])()));
   $('#complaint-status').addEventListener('change', renderComplaints);
   $('#escalation-status').addEventListener('change', renderEscalations);
   $('#docket-status').addEventListener('change', renderDockets);
